@@ -21,7 +21,7 @@ class SequentialVAE(tf.keras.Model):
         DEFINE AN ENCODER MODEL THAT DOWNSAMPLES
         
         """
-
+        super(SequentialVAE, self).__init__()
         # the input layer of a keras model
         x = input_layer = keras.Input(shape=input_shape)
 
@@ -174,7 +174,7 @@ class ForwardModel(tf.keras.Sequential):
             the starting lower bound of the standard deviation
 
         """
-
+        super(ForwardModel, self).__init__()
         self.max_logstd = tf.Variable(tf.fill([1, 1], np.log(
             initial_max_std).astype(np.float32)), trainable=True)
         self.min_logstd = tf.Variable(tf.fill([1, 1], np.log(

@@ -115,7 +115,7 @@ class Encoder(tf.keras.Sequential):
         initial_min_std: float
             the starting lower bound of the standard deviation
         """
-
+        super(Encoder, self).__init__()
         self.max_logstd = tf.Variable(tf.fill([1, 1], np.log(
             initial_max_std).astype(np.float32)), trainable=True)
         self.min_logstd = tf.Variable(tf.fill([1, 1], np.log(
@@ -191,7 +191,7 @@ class DiscreteDecoder(tf.keras.Sequential):
         hidden_size: int
             the global hidden size of the neural network
         """
-
+        super(DiscreteDecoder, self).__init__()
         layers = []
         for i in range(num_layers):
             kwargs = dict()
@@ -265,6 +265,7 @@ class ContinuousDecoder(tf.keras.Sequential):
         initial_min_std: float
             the starting lower bound of the standard deviation
         """
+        super(ContinuousDecoder, self).__init__()
 
         self.max_logstd = tf.Variable(tf.fill([1, 1], np.log(
             initial_max_std).astype(np.float32)), trainable=True)

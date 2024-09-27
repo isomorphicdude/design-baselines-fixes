@@ -103,9 +103,9 @@ class ContinuousMarginal(tf.Module):
             the shape of a single tensor input
         """
 
+        super(ContinuousMarginal, self).__init__()
         self.mean = tf.Variable(initial_mean, trainable=True)
         self.logstd = initial_logstd
-        super(ContinuousMarginal, self).__init__()
 
     def get_params(self):
         """Return a dictionary of parameters for a particular distribution
@@ -147,8 +147,8 @@ class DiscreteMarginal(tf.Module):
             the shape of a single tensor input
         """
 
-        self.logits = tf.Variable(initial_logits, trainable=True)
         super(DiscreteMarginal, self).__init__()
+        self.logits = tf.Variable(initial_logits, trainable=True)
 
     def get_params(self):
         """Return a dictionary of parameters for a particular distribution

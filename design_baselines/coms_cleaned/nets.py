@@ -68,7 +68,7 @@ class SequentialVAE(tf.keras.Model):
         DEFINE AN ENCODER MODEL THAT DOWNSAMPLES
 
         """
-
+        super(SequentialVAE, self).__init__()
         # the input layer of a keras model
         x = input_layer = keras.Input(shape=input_shape)
 
