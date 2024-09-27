@@ -139,6 +139,6 @@ websocket-client==0.57.0
 widgetsnbextension==3.5.1
 yarl==1.4.2
 zipp==3.1.0
-design-bench==2.0.20 # removed [all], we install mujoco manually if needed
+# design-bench==2.0.20 # removed [all], we install mujoco manually if needed
 # morphing-agents==1.5.1 no need if no mujoco
 -e .
