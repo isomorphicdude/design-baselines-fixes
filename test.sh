@@ -1,5 +1,5 @@
 # set up machine parameters
-NUM_CPUS=20
+NUM_CPUS=8
 NUM_GPUS=1
 
 for TASK_NAME in \
@@ -13,15 +13,15 @@ for TASK_NAME in \
     # utr; do
     
   for ALGORITHM_NAME in \
-      autofocused-cbas \
-      cbas \
-      bo-qei \
-      cma-es \
-      gradient-ascent \
-      gradient-ascent-min-ensemble \
-      gradient-ascent-mean-ensemble \
-      mins \
-      reinforce; do
+      autofocused-cbas; do
+      # cbas \
+      # bo-qei \
+      # cma-es \
+      # gradient-ascent \
+      # gradient-ascent-min-ensemble \
+      # gradient-ascent-mean-ensemble \
+      # mins \
+      # reinforce; do
   
     # launch several model-based optimization algorithms using the command line interface
     # for example: 
@@ -35,8 +35,8 @@ for TASK_NAME in \
       --local-dir ~/db-results/$ALGORITHM_NAME-$TASK_NAME \
       --cpus $NUM_CPUS \
       --gpus $NUM_GPUS \
-      --num-parallel 8 \
-      --num-samples 8
+      --num-parallel 1 \
+      --num-samples 1
     
   done
   
