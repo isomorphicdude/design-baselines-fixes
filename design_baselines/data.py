@@ -1,9 +1,12 @@
-from design_bench.task import Task
-from design_bench import make
+
+import torch
+from torch.utils.data import DataLoader, Dataset, TensorDataset
+import numpy as np
 from tensorflow.data import Dataset
 import tensorflow as tf
-import numpy as np
 
+from design_bench.task import Task
+from design_bench import make
 
 def build_pipeline(x, y, w=None, val_size=200, batch_size=128,
                    bootstraps=0, bootstraps_noise=None, buffer=None):
@@ -87,7 +90,74 @@ def build_pipeline(x, y, w=None, val_size=200, batch_size=128,
     validation_dataset = validation_dataset.batch(batch_size)
     return (training_dataset.prefetch(tf.data.experimental.AUTOTUNE),
             validation_dataset.prefetch(tf.data.experimental.AUTOTUNE))
+    
 
+def build_pipeline_torch(x, y, w=None, val_size=200, batch_size=128,
+                   bootstraps=0, bootstraps_noise=None, buffer=None):
+    """
+    A torch version of the build_pipeline function.
+    Returns:
+        (torch.utils.data.DataLoader, torch.utils.data.DataLoader)
+    """
+    if not isinstance(x, torch.Tensor):
+        x = torch.tensor(x)
+    if not isinstance(y, torch.Tensor):
+        y = torch.tensor(y)
+
+    indices = torch.randperm(x.size(0))
+    x = x[indices]
+    y = y[indices]
+
+    
+    train_x, val_x = x[val_size:], x[:val_size]
+    train_y, val_y = y[val_size:], y[:val_size]
+    size = train_x.size(0) # data dimension
+    
+    train_inputs = [train_x, train_y]
+    val_inputs = [val_x, val_y]
+    
+    if bootstraps > 0:
+        # sample the dataset with replacement and compute bincounts
+        bootstraps_list = []
+        for _ in range(bootstraps):
+            sample_indices = torch.randint(0, size, (size,))
+            counts = torch.bincount(sample_indices, minlength=size).float()
+            bootstraps_list.append(counts)
+        bootstraps_tensor = torch.stack(bootstraps_list, dim=1)  # Shape: [size, bootstraps]
+        train_inputs.append(bootstraps_tensor)
+        
+        if bootstraps_noise is not None:
+            noise = bootstraps_noise * torch.randn(size, bootstraps)
+            train_inputs.append(noise)
+            
+    if w is not None:
+        # Add importance weights to the dataset
+        if not isinstance(w, torch.Tensor):
+            w = torch.tensor(w)
+        w_train = w[indices[val_size:]]
+        train_inputs.append(w_train)
+        
+    # build torch dataloader
+    train_dset = TensorDataset(*train_inputs)
+    val_dset = TensorDataset(*val_inputs)
+    
+    train_loader = DataLoader(
+        train_dset,
+        batch_size=batch_size,
+        shuffle=True if buffer is None else False,  
+    )
+    val_loader = DataLoader(
+        val_dset,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    return train_loader, val_loader
+    
+    
+        
+    
+    
 
 class StaticGraphTask(Task):
     """A container class for model-based optimization problems where a
