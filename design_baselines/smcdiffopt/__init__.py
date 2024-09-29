@@ -199,7 +199,7 @@ def smcdiffopt(
         logging.info("Loading pre-trained weights.")
         repo_id = "isomorphicdude/SMCDiffOpt"
         file_name = f"{task_name}.pt"
-        download_path = hf_hub_download(repo_id, os.path.join(logging_dir, file_name))
+        download_path = hf_hub_download(repo_id, file_name)
         nn_model.load_state_dict(
             torch.load(
                 download_path, map_location="cpu"
