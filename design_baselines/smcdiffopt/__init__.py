@@ -106,7 +106,7 @@ def smcdiff_opt(
     )
 
     logger = Logger(logging_dir)
-    with open(os.path.join(logger.logging_dir, "params.json"), "w") as f:
+    with open(os.path.join(logging_dir, "params.json"), "w") as f:
         json.dump(params, f)
 
     # create task

@@ -68,7 +68,7 @@ def create_sampler(
         dynamic_threshold=dynamic_threshold,
         clip_denoised=clip_denoised,
         rescale_timesteps=rescale_timesteps,
-        use_timesteps=space_timesteps(steps, timestep_respacing),
+        # use_timesteps=space_timesteps(steps, timestep_respacing),
         device=device,
     )
 
@@ -171,14 +171,13 @@ class GaussianDiffusion(ABC):
         In other words, sample from q(x_t | x_0).
 
         Args:
-            x_0: The initial data batch.
-            t: The number of diffusion steps (minus 1). Here, 0 means one step.
-            noise: If specified, the split-out normal noise.
-
+            x_0 (torch.Tensor): the [N x C x ...] tensor of noiseless inputs.
+            t (int): the integer timestep.
+            
         Returns:
             tuple (x_t, noise), both of x_0's shape.
         """
-        noise = torch.randn_like(x_0)
+        noise = torch.randn_like(x_0, device=self.device)
         assert noise.shape == x_0.shape
 
         coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_0)
