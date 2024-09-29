@@ -122,9 +122,11 @@ def smcdiffopt(
     logging.info(f"Dimension is {task.x.shape[1]}")
 
     if task.is_discrete:
-        raise NotImplementedError(
-            "SMC-DIFF-OPT does not support discrete x values for now."
-        )
+        # raise NotImplementedError(
+        #     "SMC-DIFF-OPT does not support discrete x values for now."
+        # )
+        task.x = task.to_logits_numpy(task.x)
+        
         
     # instantiate the diffusion model
     # data preprocessing
