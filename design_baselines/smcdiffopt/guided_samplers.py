@@ -100,8 +100,8 @@ class SMCDiffOpt(GaussianDiffusion):
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
             
         elif self.task == "optimisation":
-            numerator = self.objective_fn(x_new.cpu().numpy()) * (-1)
-            denominator = self.objective_fn(x_old.cpu().numpy()) * (-1)
+            numerator = self.objective_fn(x_new.cpu().numpy())
+            denominator = self.objective_fn(x_old.cpu().numpy())
             
             
             # to device
@@ -113,7 +113,7 @@ class SMCDiffOpt(GaussianDiffusion):
 
         return numerator * self.anneal_schedule(
             time_step
-        ) - denominator * self.anneal_schedule(time_step + 1)
+        ) - denominator * self.anneal_schedule(time_step - 1)
 
     def resample(self, weights, method="systematic"):
         if method == "systematic":
@@ -155,7 +155,6 @@ class SMCDiffOpt(GaussianDiffusion):
 
         with torch.no_grad():
             for i, num_t in enumerate(reverse_ts):
-                print(f"Sampling at time {num_t}.")
                 if self.task == "inverse_problem":
                     y_new = self._get_obs(y_obs, i, num_particles, method="default")
 

@@ -74,7 +74,7 @@ logging.basicConfig(
 )
 @click.option(
     "--normalize-xs/--no-normalize-xs",
-    default=True,
+    default=False,
     type=bool,
     help="Whether to normalize the x values in the Offline MBO "
     "dataset before performing model-based optimization. "
@@ -181,7 +181,7 @@ def smcdiffopt(
     try:
         logging.info("Loading pre-trained weights.")
         nn_model.load_state_dict(
-            torch.load(os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"), map_location="cpu")
+            torch.load(os.path.join(logging_dir, f"model_{15001}.pt"), map_location="cpu")
         )
     except FileNotFoundError:
         logging.info("No pre-trained weights found, training model from scratch.")
@@ -219,18 +219,19 @@ def smcdiffopt(
     # evaluate and save the results
     solution = x if isinstance(x, np.ndarray) else x.cpu().detach().numpy()
     try:
-        np.save(os.path.join("logging_dir", f"solution.npy"), solution)
+        np.save(os.path.join(f"{logging_dir}", f"solution.npy"), solution)
     except FileNotFoundError:
         # pickle
         import pickle
-        with open(os.path.join("logging_dir", f"solution.pkl"), "wb") as f:
+        with open(os.path.join(f"{logging_dir}", f"solution.pkl"), "wb") as f:
             pickle.dump(solution, f)
 
     score = task.predict(solution)
     if task.is_normalized_y:
         score = task.denormalize_y(score)
-
+    
     logger.record("score", score, 1000, percentile=True)
+    logging.info(score)
 
 
 if __name__ == "__main__":
