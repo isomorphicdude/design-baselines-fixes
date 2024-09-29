@@ -166,13 +166,13 @@ class SMCDiffOpt(GaussianDiffusion):
                 if score_output:
                     # score predicting model
                     eps_pred = (
-                        model_fn(x_t.view(model_input_shape), vec_t)
+                        model_fn(x_t.view(*model_input_shape), vec_t)
                         * (-1)
                         * d_t_func(i)
                     )  # (batch * num_particles, 3, 256, 256)
                 else:
                     # noise predicting model
-                    eps_pred = model_fn(x_t.view(model_input_shape), vec_t)
+                    eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
                     if eps_pred.shape[1] == 2 * self.shape[1]:
                         eps_pred, model_var_values = torch.split(
                             eps_pred, self.shape[1], dim=1
@@ -180,7 +180,7 @@ class SMCDiffOpt(GaussianDiffusion):
 
                 x_new, x_mean_new = self.get_proposal_X_t(
                     num_t,
-                    x_t.view(model_input_shape),
+                    x_t.view(*model_input_shape),
                     eps_pred,
                     method=sampling_method,
                 )  # (batch * num_particles, 3, 256, 256)
@@ -188,8 +188,8 @@ class SMCDiffOpt(GaussianDiffusion):
                 # x_new = x_new.clamp(-clamp_to, clamp_to)
                 x_input_shape = (self.shape[0] * num_particles, -1)
                 log_weights = self.get_log_potential(
-                    x_new.view(x_input_shape),
-                    x_t.view(x_input_shape),
+                    x_new.view(*x_input_shape),
+                    x_t.view(*x_input_shape),
                     y_new,
                     y_old,
                     i,
