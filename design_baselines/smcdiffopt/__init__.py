@@ -11,6 +11,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import logging
+from huggingface_hub import hf_hub_download
 
 from design_baselines.data import StaticGraphTask, build_pipeline
 from design_baselines.logger import Logger
@@ -113,6 +114,7 @@ def smcdiffopt(
         json.dump(params, f)
 
     # create task
+    task_name = task # for model loading
     logging.info("Creating task...")
     logging.info(f"Task is: {task}")
     task = StaticGraphTask(
@@ -195,9 +197,12 @@ def smcdiffopt(
     # try load weights of pre-trained diffusion model from logging directory
     try:
         logging.info("Loading pre-trained weights.")
+        repo_id = "isomorphicdude/SMCDiffOpt"
+        file_name = f"{task_name}.pt"
+        download_path = hf_hub_download(repo_id, os.path.join(logging_dir, file_name))
         nn_model.load_state_dict(
             torch.load(
-                os.path.join(logging_dir, f"model_{5101}.pt"), map_location="cpu"
+                download_path, map_location="cpu"
             )
         )
     except FileNotFoundError:
@@ -255,7 +260,11 @@ def smcdiffopt(
         score = task.denormalize_y(score)
 
     logger.record("score", score, 1000, percentile=True)
-    logging.info(score)
+    logging.info(f"Full score: {score}")
+    logging.info(f"100 \% Percentile score: {np.percentile(score, 100)}")
+    logging.info(f"90 \% Percentile score: {np.percentile(score, 90)}")
+    logging.info(f"75 \% Percentile score: {np.percentile(score, 75)}")
+    logging.info(f"50 \% Percentile score: {np.percentile(score, 50)}")
 
 
 if __name__ == "__main__":
