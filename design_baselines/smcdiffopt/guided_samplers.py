@@ -241,29 +241,54 @@ class SMCDiffOpt(GaussianDiffusion):
             x_mean (torch.Tensor): mean of x_{t-1}
         """
 
-        m = self.sqrt_alphas_cumprod[timestep]
-        sqrt_1m_alpha = self.sqrt_one_minus_alphas_cumprod[timestep]
+        m = extract_and_expand(
+            self.sqrt_alphas_cumprod,
+            timestep,
+            x_t
+        )
+        sqrt_1m_alpha = extract_and_expand(
+            self.sqrt_1m_alphas_cumprod,
+            timestep,
+            x_t
+        )
 
         v = sqrt_1m_alpha**2
 
-        alpha_cumprod = self.alphas_cumprod[timestep]
+        alpha_cumprod = extract_and_expand(
+            self.alphas_cumprod,
+            timestep,
+            x_t
+        )
 
-        alpha_cumprod_prev = self.alphas_cumprod_prev[timestep]
+        alpha_cumprod_prev = extract_and_expand(
+            self.alphas_cumprod_prev,
+            timestep,
+            x_t
+        )
+        
+        m_prev = extract_and_expand(
+            self.sqrt_alphas_cumprod_prev,
+            timestep,
+            x_t
+        )
+        
+        v_prev = extract_and_expand(
+            self.sqrt_one_minus_alphas_cumprod_prev,
+            timestep,
+            x_t
+        ) ** 2
 
-        m_prev = self.sqrt_alphas_cumprod_prev[timestep]
-        v_prev = self.sqrt_one_minus_alphas_cumprod_prev[timestep] ** 2
-
-        x_0 = (x_t - sqrt_1m_alpha.to(x_t.device) * eps_pred) / m.to(x_t.device)
+        x_0 = (x_t - sqrt_1m_alpha * eps_pred) / m
 
         coeff1 = (
             torch.sqrt((v_prev / v) * (1 - alpha_cumprod / alpha_cumprod_prev))
             * self.eta
         )
         coeff2 = torch.sqrt(v_prev - coeff1**2)
-        x_mean = m_prev.to(x_t.device) * x_0 + coeff2.to(x_t.device) * eps_pred
-        std = coeff1.to(x_t.device)
+        x_mean = m_prev * x_0 + coeff2 * eps_pred
+        std = coeff1
 
-        new_x = x_mean + std * torch.randn_like(x_mean)
+        new_x = x_mean + std * torch.randn_like(x_mean, device=x_t.device)
         if return_std:
             return new_x, x_mean, std
         else:
