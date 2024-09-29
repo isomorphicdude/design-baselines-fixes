@@ -247,7 +247,7 @@ class SMCDiffOpt(GaussianDiffusion):
             x_t
         )
         sqrt_1m_alpha = extract_and_expand(
-            self.sqrt_1m_alphas_cumprod,
+            self.sqrt_one_minus_alphas_cumprod,
             timestep,
             x_t
         )
