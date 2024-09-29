@@ -107,7 +107,7 @@ class SMCDiffOpt(GaussianDiffusion):
             # to device
             numerator = torch.tensor(numerator.numpy(), device=self.device)
             denominator = torch.tensor(denominator.numpy(), device=self.device)
-            print(numerator.mean())
+            print(f"Iteration {time_step}, mean value: {numerator.mean()}")
         else:
             raise ValueError("Invalid task.")
 

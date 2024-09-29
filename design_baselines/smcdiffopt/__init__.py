@@ -149,7 +149,7 @@ def smcdiffopt(
 
     training_config = {
         "batch_size": 256,
-        "num_epochs": 15_001,
+        "num_epochs": 2000,
         "learning_rate": 1e-3,
     }
 
@@ -163,8 +163,8 @@ def smcdiffopt(
     if task.is_discrete:
 
         def objective_fn(x):
-            inv_transformed = scaler.inverse_transform(x.cpu().numpy())
-            return task.predict(np.argmax(inv_transformed, axis=-1))
+            inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(evaluation_samples, *task.x.shape[1:])
+            return task.predict(inv_transformed)
 
     else:
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
@@ -250,7 +250,7 @@ def smcdiffopt(
         with open(os.path.join(f"{logging_dir}", f"solution.pkl"), "wb") as f:
             pickle.dump(solution, f)
 
-    score = task.predict(solution)
+    score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
     if task.is_normalized_y:
         score = task.denormalize_y(score)
 
