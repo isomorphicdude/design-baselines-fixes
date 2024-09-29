@@ -84,7 +84,7 @@ logging.basicConfig(
               default=128, type=int,
               help='The samples to generate when solving the model-based '
                    'optimization problem.')
-def smcdiff_opt(
+def smcdiffopt(
     logging_dir,
     task,
     task_relabel,
@@ -215,4 +215,4 @@ def smcdiff_opt(
 
 
 if __name__ == "__main__":
-    smcdiff_opt()
+    smcdiffopt()
