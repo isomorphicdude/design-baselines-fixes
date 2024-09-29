@@ -157,7 +157,7 @@ def smcdiffopt(
     # initialise the model
     model_config = {
         "steps": 1000,
-        "shape": (evaluation_samples, *task.x.shape[1:]),
+        "shape": (1, *task.x.shape[1:]),
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
         "model_var_type": "fixed_large",
