@@ -157,12 +157,15 @@ def smcdiffopt(
         "shape": (evaluation_samples, task.x.shape[1:]),
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
-        "model_var_type": "fixed_small",
+        "model_var_type": "fixed_large",
         "dynamic_threshold": False,
         "clip_denoised": False,
         "rescale_timesteps": False,
         "timestep_respacing": 1000,
         "device": "cuda",
+        "scaler": scaler,
+        "sampling_task": "optimisation",
+        "objective_fn": lambda x: task.predict(scaler.inverse_transform(x)),
     }
     
     dim_x = task.x.shape[1]
@@ -175,7 +178,7 @@ def smcdiffopt(
     try:
         logging.info("Loading pre-trained weights.")
         nn_model.load_state_dict(
-            torch.load(os.path.join(logging_dir, "nn_model.pth"), map_location="cpu")
+            torch.load(os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"), map_location="cpu")
         )
     except FileNotFoundError:
         logging.info("No pre-trained weights found, training model from scratch.")
@@ -199,13 +202,21 @@ def smcdiffopt(
         
     # perform model-based optimization
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(model_config["device"])
+    diffusion_model.model.to(model_config["device"])
+    diffusion_model.model.eval()
     x = diffusion_model.sample(
         x_start=x_start,
     )
 
     # evaluate and save the results
-    solution = x  # (num_particles, dim_x)
-    np.save(os.path.join("logging_dir", f"solution.npy"), solution.numpy())
+    solution = x.cpu().numpy()  # (num_particles, dim_x)
+    try:
+        np.save(os.path.join("logging_dir", f"solution.npy"), solution)
+    except FileNotFoundError:
+        # pickle
+        import pickle
+        with open(os.path.join("logging_dir", f"solution.pkl"), "wb") as f:
+            pickle.dump(solution, f)
 
     score = task.predict(solution)
     if task.is_normalized_y:

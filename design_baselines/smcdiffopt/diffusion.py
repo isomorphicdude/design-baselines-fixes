@@ -109,12 +109,14 @@ class GaussianDiffusion(ABC):
         alphas = 1.0 - self.betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
+        self.sqrt_alphas_cumprod_prev = np.sqrt(self.alphas_cumprod_prev)
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod_prev = np.sqrt(1.0 - self.alphas_cumprod_prev)
         self.log_one_minus_alphas_cumprod = np.log(1.0 - self.alphas_cumprod)
         self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
         self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
@@ -288,12 +290,12 @@ class DDPM(GaussianDiffusion):
         """ 
         x = x_start
         device = x_start.device
-
-        int_timesteps = list(range(self.num_timesteps))[::-1]
-        for idx in int_timesteps:
-            time = torch.tensor([idx], device=device)
-            out = self.p_sample(x=x, t=time)
-            x = out['sample']
+        with torch.no_grad():    
+            int_timesteps = list(range(self.num_timesteps))[::-1]
+            for idx in int_timesteps:
+                time = torch.tensor([idx], device=device)
+                out = self.p_sample(x=x, t=time)
+                x = out['sample']
         return self.inverse_scaler(x)
     
     def p_sample(self, x, t):

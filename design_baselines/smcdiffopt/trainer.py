@@ -52,8 +52,8 @@ def train_model(
                 val_loss += diffusion_model.train_loss_fn(x, t).item()
             writer.add_scalar("Loss/val", val_loss, epoch)
 
-        logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
-        if epoch % 100 == 0:
+        if epoch % 100 == 0 or epoch == num_epochs - 1:
+            logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
             torch.save(
                 diffusion_model.model.state_dict(),
                 os.path.join(logging_dir, f"model_{epoch+1}.pt"),

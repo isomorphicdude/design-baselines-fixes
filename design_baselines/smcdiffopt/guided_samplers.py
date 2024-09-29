@@ -34,7 +34,8 @@ class SMCDiffOpt(GaussianDiffusion):
         scaler=None,
         H_func=None,  # the inverse problem operator
         noiser=None,  # the noise model (as in DPS)
-        anneal_schedule=None,  # function to anneal
+        objective_fn=None,  # the objective function
+        sampling_task="inverse_problem", # the task to be performed
     ):
         super().__init__(
             model,
@@ -51,14 +52,24 @@ class SMCDiffOpt(GaussianDiffusion):
         )
         self.H_func = H_func
         self.noiser = noiser
-        self.anneal_schedule = anneal_schedule
+        self.objective_fn = objective_fn
+        self.task = sampling_task
+        
+    @property
+    def anneal_schedule(self):
+        if self.task == "inverse_problem":
+            return lambda t: 1.0
+        elif self.task == "optimisation":
+            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)] 
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
         if method == "default":
             return self._proposal_X_t(num_t, x_t, eps_pred)
         elif method == "conditional":
-            return self._proposal_X_t_y(num_t, x_t, eps_pred, **kwargs)
+            c_t = self.sqrt_alphas_cumprod[-(num_t + 1)]
+            d_t = self.sqrt_1m_alphas_cumprod[-(num_t + 1)]
+            return self._proposal_X_t_y(num_t, x_t, eps_pred, kwargs["y_t"], c_t, d_t)
         else:
             raise ValueError("Invalid proposal method.")
 
@@ -68,11 +79,7 @@ class SMCDiffOpt(GaussianDiffusion):
         x_old,
         obs_new,
         obs_old,
-        c_new,
-        c_old,
-        d_new,
-        d_old,
-        task="inverse_problem",
+        time_step: int,
     ):
         """
         Computes the log G(x_t, x_{t+1}) in FK model.
@@ -82,16 +89,26 @@ class SMCDiffOpt(GaussianDiffusion):
             x_old (torch.Tensor): shape (batch*num_particles, dim_x)
             obs_new (torch.Tensor): shape (batch, dim_y)
             obs_old (torch.Tensor): shape (batch, dim_y)
-            task (str): the task to be performed
+            time_step (int): time step
         """
-        if task == "inverse_problem":
+        if self.task == "inverse_problem":
+            c_new = self.sqrt_alphas_cumprod[-(time_step + 1)]
+            c_old = self.sqrt_alphas_cumprod[-time_step]
+            d_new = self.sqrt_one_minus_alphas_cumprod[-(time_step + 1)]
+            d_old = self.sqrt_one_minus_alphas_cumprod[-time_step]
             numerator = self._log_gauss_liklihood(x_new, obs_new, c_new, d_new)
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
-        elif task == "optimisation":
-            numerator = self.model_log_prob(x_new)
-            denominator = self.model_log_prob(x_old)
+            
+        elif self.task == "optimisation":
+            
+            numerator = self.objective_fn(x_new) * (-1)
+            denominator = self.objective_fn(x_old) * (-1)
+        else:
+            raise ValueError("Invalid task.")
 
-        return numerator - denominator
+        return numerator * self.anneal_schedule(
+            time_step
+        ) - denominator * self.anneal_schedule(time_step + 1)
 
     def resample(self, weights, method="systematic"):
         if method == "systematic":
@@ -113,8 +130,6 @@ class SMCDiffOpt(GaussianDiffusion):
         """
         samples = []
 
-        # create y_obs sequence for filtering
-        # data = self._construct_obs_sequence(y_obs)
         num_particles = kwargs.get("num_particles", 10)
         score_output = kwargs.get("score_output", False)
         sampling_method = kwargs.get("sampling_method", "conditional")
@@ -122,10 +137,8 @@ class SMCDiffOpt(GaussianDiffusion):
 
         ts = list(range(self.num_timesteps))[::-1]
         reverse_ts = ts[::-1]
-        c_t_func = lambda t: self.sqrt_alphas_cumprod[-(t + 1)]
-        c_t_prev_func = lambda t: self.sqrt_alphas_cumprod[-(t)]
+        
         d_t_func = lambda t: self.sqrt_1m_alphas_cumprod[-(t + 1)]
-        d_t_prev_func = lambda t: self.sqrt_1m_alphas_cumprod[-(t)]
 
         model_fn = get_model_fn(self.model, train=False)
 
@@ -144,20 +157,18 @@ class SMCDiffOpt(GaussianDiffusion):
 
                 vec_t = (torch.ones(self.shape[0]) * (reverse_ts[i - 1])).to(x_t.device)
 
-                # get model prediction
-                # assume input is (N, 3, 256, 256)
-                # here N = batch * num_particles
                 model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
 
                 if score_output:
+                    # score predicting model
                     eps_pred = (
                         model_fn(x_t.view(model_input_shape), vec_t)
                         * (-1)
                         * d_t_func(i)
                     )  # (batch * num_particles, 3, 256, 256)
                 else:
+                    # noise predicting model
                     eps_pred = model_fn(x_t.view(model_input_shape), vec_t)
-                    # print(vec_t)
                     if eps_pred.shape[1] == 2 * self.shape[1]:
                         eps_pred, model_var_values = torch.split(
                             eps_pred, self.shape[1], dim=1
@@ -169,21 +180,16 @@ class SMCDiffOpt(GaussianDiffusion):
                     eps_pred,
                     method=sampling_method,
                     y_t=y_new,
-                    c_t=c_t_func(i),
-                    d_t=d_t_func(i),
                 )  # (batch * num_particles, 3, 256, 256)
 
                 # x_new = x_new.clamp(-clamp_to, clamp_to)
                 x_input_shape = (self.shape[0] * num_particles, -1)
-                log_weights = self.log_potential(
+                log_weights = self.get_log_potential(
                     x_new.view(x_input_shape),
                     x_t.view(x_input_shape),
                     y_new,
                     y_old,
-                    c_new=c_t_func(i),
-                    c_old=c_t_prev_func(i),
-                    d_new=d_t_func(i),
-                    d_old=d_t_prev_func(i),
+                    i,
                 ).view(self.shape[0], num_particles)
 
                 # normalise weights
@@ -205,11 +211,8 @@ class SMCDiffOpt(GaussianDiffusion):
                     samples.append(
                         x_t.reshape(self.shape[0] * num_particles, *self.shape[1:])
                     )
-                    # samples.append(
-                    #     x_t.view(num_particles, self.shape[0], *self.shape[1:])[-1]
-                    # )
 
-        # average and apply inverse scaler
+        # apply inverse scaler
         if return_list:
             for i in range(len(samples)):
                 samples[i] = self.inverse_scaler(samples[i])
@@ -222,7 +225,7 @@ class SMCDiffOpt(GaussianDiffusion):
     def p_sample(self, x, t, model):
         raise NotImplementedError("p_sample not implemented for SMCDiffOpt.")
 
-    def _proposal_X_t(self, timestep, x_t, eps_pred, obs=None, return_std=False):
+    def _proposal_X_t(self, timestep, x_t, eps_pred, return_std=False):
         """
         Sample x_{t-1} from x_{t} in the diffusion model as a naive proposal.
         Args:
@@ -245,7 +248,7 @@ class SMCDiffOpt(GaussianDiffusion):
         alpha_cumprod_prev = self.alphas_cumprod_prev[timestep]
 
         m_prev = self.sqrt_alphas_cumprod_prev[timestep]
-        v_prev = self.sqrt_1m_alphas_cumprod_prev[timestep] ** 2
+        v_prev = self.sqrt_one_minus_alphas_cumprod_prev[timestep] ** 2
 
         x_0 = (x_t - sqrt_1m_alpha.to(x_t.device) * eps_pred) / m.to(x_t.device)
 
