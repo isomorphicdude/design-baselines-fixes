@@ -217,7 +217,7 @@ def smcdiffopt(
     )
 
     # evaluate and save the results
-    solution = x.cpu().numpy()  # (num_particles, dim_x)
+    solution = x if isinstance(x, np.ndarray) else x.cpu().detach().numpy()
     try:
         np.save(os.path.join("logging_dir", f"solution.npy"), solution)
     except FileNotFoundError:

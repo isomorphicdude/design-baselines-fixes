@@ -60,7 +60,7 @@ class SMCDiffOpt(GaussianDiffusion):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)] 
+            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t)] 
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
@@ -100,13 +100,14 @@ class SMCDiffOpt(GaussianDiffusion):
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
             
         elif self.task == "optimisation":
-            
             numerator = self.objective_fn(x_new.cpu().numpy()) * (-1)
             denominator = self.objective_fn(x_old.cpu().numpy()) * (-1)
             
+            
             # to device
-            numerator = torch.tensor(numerator, device=self.device)
-            denominator = torch.tensor(denominator, device=self.device)
+            numerator = torch.tensor(numerator.numpy(), device=self.device)
+            denominator = torch.tensor(denominator.numpy(), device=self.device)
+            print(numerator.mean())
         else:
             raise ValueError("Invalid task.")
 
@@ -222,11 +223,11 @@ class SMCDiffOpt(GaussianDiffusion):
         # apply inverse scaler
         if return_list:
             for i in range(len(samples)):
-                samples[i] = self.inverse_scaler(samples[i])
+                samples[i] = self.inverse_scaler(samples[i].squeeze())
             return samples, torch.exp(log_weights)
         else:
             return self.inverse_scaler(
-                x_t.view(num_particles, self.shape[0], *self.shape[1:])
+                x_t.view(num_particles, self.shape[0], *self.shape[1:]).squeeze()
             )
 
     def p_sample(self, x, t, model):
