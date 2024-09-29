@@ -30,6 +30,7 @@ def train_model(
     logging_dir: str = "smcdiffopt",
 ):
     losses = []
+    diffusion_model.model.to(device)
     for epoch in range(num_epochs):
         for x, y in train_loader:
             x = x.to(device)
@@ -54,7 +55,7 @@ def train_model(
         logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
         if epoch % 100 == 0:
             torch.save(
-                diffusion_model.state_dict(),
+                diffusion_model.model.state_dict(),
                 os.path.join(logging_dir, f"model_{epoch+1}.pt"),
             )
     return losses

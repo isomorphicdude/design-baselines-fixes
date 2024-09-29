@@ -41,7 +41,7 @@ class FullyConnectedWithTime(nn.Module):
     def forward(self, x, t):
         t_fourier = self._get_time_embedding(t)
         # rershape t_fourier to match the batch size
-        t_fourier = t_fourier.expand(x.shape[0], -1)
+        t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
         x = torch.cat([x, t_fourier], dim=1)
         
         for layer in self.layers[:-1]:
