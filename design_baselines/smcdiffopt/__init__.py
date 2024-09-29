@@ -111,7 +111,7 @@ def smcdiffopt(
 
     # create task
     logging.info("Creating task...")
-    logging.info(f"Task is: {task}, dimension is {task.x.shape[1]}")
+    logging.info(f"Task is: {task}")
     task = StaticGraphTask(
         task,
         relabel=task_relabel,
@@ -119,6 +119,7 @@ def smcdiffopt(
             max_samples=task_max_samples, distribution=task_distribution
         ),
     )
+    logging.info(f"Dimension is {task.x.shape[1]}")
 
     if task.is_discrete:
         raise NotImplementedError(
@@ -210,7 +211,9 @@ def smcdiffopt(
     x = diffusion_model.sample(
         x_start=x_start,
         y_obs=None,
-        
+        num_particles=evaluation_samples,
+        sampling_method="default",
+        resampling_method="systematic",
     )
 
     # evaluate and save the results
