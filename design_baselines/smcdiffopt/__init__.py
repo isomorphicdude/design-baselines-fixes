@@ -265,6 +265,7 @@ def smcdiffopt(
     logging.info(f"90 \% Percentile score: {np.percentile(score, 90)}")
     logging.info(f"75 \% Percentile score: {np.percentile(score, 75)}")
     logging.info(f"50 \% Percentile score: {np.percentile(score, 50)}")
+    logging.info(f"Min-Max normalized score: {np.mean( (score - np.min(score)) / (np.max(score) - np.min(score)) )}")
 
 
 if __name__ == "__main__":
