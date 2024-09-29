@@ -279,6 +279,7 @@ class GaussianDiffusion(ABC):
                 x = x.detach().cpu().numpy()
                 return self.scaler.inverse_transform(x)
             else:
+                x = x.detach().cpu()
                 return self.scaler.inverse_transform(x)
         else:
             return x

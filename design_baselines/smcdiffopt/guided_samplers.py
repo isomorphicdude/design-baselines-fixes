@@ -101,8 +101,12 @@ class SMCDiffOpt(GaussianDiffusion):
             
         elif self.task == "optimisation":
             
-            numerator = self.objective_fn(x_new) * (-1)
-            denominator = self.objective_fn(x_old) * (-1)
+            numerator = self.objective_fn(x_new.cpu().numpy()) * (-1)
+            denominator = self.objective_fn(x_old.cpu().numpy()) * (-1)
+            
+            # to device
+            numerator = torch.tensor(numerator, device=self.device)
+            denominator = torch.tensor(denominator, device=self.device)
         else:
             raise ValueError("Invalid task.")
 
