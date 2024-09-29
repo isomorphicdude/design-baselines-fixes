@@ -80,10 +80,13 @@ logging.basicConfig(
     "dataset before performing model-based optimization. "
     "(note that x must not be discrete)",
 )
-@click.option('--evaluation-samples',
-              default=128, type=int,
-              help='The samples to generate when solving the model-based '
-                   'optimization problem.')
+@click.option(
+    "--evaluation-samples",
+    default=128,
+    type=int,
+    help="The samples to generate when solving the model-based "
+    "optimization problem.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -126,13 +129,11 @@ def smcdiffopt(
         #     "SMC-DIFF-OPT does not support discrete x values for now."
         # )
         task.map_to_logits()
-        
-        
-        
+
     # instantiate the diffusion model
     # data preprocessing
     train_x, val_x, train_y, val_y = train_test_split(task.x, task.y, test_size=0.1)
-    
+
     train_x = train_x.reshape(train_x.shape[0], -1)
     val_x = val_x.reshape(val_x.shape[0], -1)
 
@@ -151,7 +152,7 @@ def smcdiffopt(
         "num_epochs": 15_001,
         "learning_rate": 1e-3,
     }
-    
+
     train_loader = DataLoader(
         train_dataset, batch_size=training_config["batch_size"], shuffle=True
     )
@@ -159,7 +160,15 @@ def smcdiffopt(
         val_dataset, batch_size=training_config["batch_size"], shuffle=False
     )
 
-    
+    if task.is_discrete:
+
+        def objective_fn(x):
+            inv_transformed = scaler.inverse_transform(x.cpu().numpy())
+            return task.predict(np.argmax(inv_transformed, dim=-1))
+
+    else:
+        objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
+
     # initialise the model
     model_config = {
         "steps": 1000,
@@ -174,9 +183,9 @@ def smcdiffopt(
         "device": "cuda",
         "scaler": scaler,
         "sampling_task": "optimisation",
-        "objective_fn": lambda x: task.predict(scaler.inverse_transform(x)),
+        "objective_fn": objective_fn,
     }
-    
+
     dim_x = np.prod(task.x.shape[1:])
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=999)
     diffusion_model = create_sampler(
@@ -187,7 +196,9 @@ def smcdiffopt(
     try:
         logging.info("Loading pre-trained weights.")
         nn_model.load_state_dict(
-            torch.load(os.path.join(logging_dir, f"model_{15001}.pt"), map_location="cpu")
+            torch.load(
+                os.path.join(logging_dir, f"model_{5101}.pt"), map_location="cpu"
+            )
         )
     except FileNotFoundError:
         logging.info("No pre-trained weights found, training model from scratch.")
@@ -197,7 +208,9 @@ def smcdiffopt(
             diffusion_model=diffusion_model,
             train_loader=train_loader,
             val_loader=val_loader,
-            optimizer=torch.optim.Adam(nn_model.parameters(), lr=training_config["learning_rate"]),
+            optimizer=torch.optim.Adam(
+                nn_model.parameters(), lr=training_config["learning_rate"]
+            ),
             num_epochs=training_config["num_epochs"],
             writer=writer,
             device=model_config["device"],
@@ -205,13 +218,17 @@ def smcdiffopt(
         )
         # load
         nn_model.load_state_dict(
-            torch.load(os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"), map_location="cpu")
+            torch.load(
+                os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"),
+                map_location="cpu",
+            )
         )
-        
-        
+
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
-    x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(model_config["device"])
+    x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
+        model_config["device"]
+    )
     diffusion_model.model.to(model_config["device"])
     diffusion_model.model.eval()
     x = diffusion_model.sample(
@@ -229,13 +246,14 @@ def smcdiffopt(
     except FileNotFoundError:
         # pickle
         import pickle
+
         with open(os.path.join(f"{logging_dir}", f"solution.pkl"), "wb") as f:
             pickle.dump(solution, f)
 
     score = task.predict(solution)
     if task.is_normalized_y:
         score = task.denormalize_y(score)
-    
+
     logger.record("score", score, 1000, percentile=True)
     logging.info(score)
 

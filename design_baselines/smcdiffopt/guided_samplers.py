@@ -100,8 +100,8 @@ class SMCDiffOpt(GaussianDiffusion):
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
             
         elif self.task == "optimisation":
-            numerator = self.objective_fn(x_new.cpu().numpy())
-            denominator = self.objective_fn(x_old.cpu().numpy())
+            numerator = self.objective_fn(x_new)
+            denominator = self.objective_fn(x_old)
             
             
             # to device
