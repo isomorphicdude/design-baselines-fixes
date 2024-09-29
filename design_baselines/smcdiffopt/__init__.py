@@ -37,7 +37,7 @@ logging.basicConfig(
 @click.option(
     "--task",
     type=str,
-    default="HopperController-Exact-v0",
+    default="Superconductor-RandomForest-v0",
     help="The name of the design-bench task to use during " "the experiment.",
 )
 @click.option(

@@ -36,7 +36,9 @@ def train_model(
             y = y.to(device)
 
             optimizer.zero_grad()
-            loss = torch.mean(diffusion_model.train_loss_fn(x, y))
+            # random integer time between 0 and 999
+            t = torch.randint(0, 1000, size=(1,), device=device)
+            loss = torch.mean(diffusion_model.train_loss_fn(x, t))
             loss.backward()
             optimizer.step()
             writer.add_scalar("Loss/train", loss.item(), epoch)
@@ -46,7 +48,7 @@ def train_model(
             for x, y in val_loader:
                 x = x.to(device)
                 y = y.to(device)
-                val_loss += diffusion_model.train_loss_fn(x, y).item()
+                val_loss += diffusion_model.train_loss_fn(x, t).item()
             writer.add_scalar("Loss/val", val_loss, epoch)
 
         logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
