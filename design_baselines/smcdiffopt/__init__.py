@@ -125,7 +125,8 @@ def smcdiffopt(
         # raise NotImplementedError(
         #     "SMC-DIFF-OPT does not support discrete x values for now."
         # )
-        task.x = task.to_logits_numpy(task.x)
+        task.map_to_logits()
+        
         
         
     # instantiate the diffusion model
@@ -159,7 +160,7 @@ def smcdiffopt(
     # initialise the model
     model_config = {
         "steps": 1000,
-        "shape": (1, *task.x.shape[1:]),
+        "shape": (1, np.prod(task.x.shape[1:])),
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
         "model_var_type": "fixed_large",
@@ -173,7 +174,7 @@ def smcdiffopt(
         "objective_fn": lambda x: task.predict(scaler.inverse_transform(x)),
     }
     
-    dim_x = task.x.shape[1]
+    dim_x = np.prod(task.x.shape[1:])
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=999)
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
