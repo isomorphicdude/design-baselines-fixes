@@ -132,6 +132,9 @@ def smcdiffopt(
     # instantiate the diffusion model
     # data preprocessing
     train_x, val_x, train_y, val_y = train_test_split(task.x, task.y, test_size=0.1)
+    
+    train_x = train_x.reshape(train_x.shape[0], -1)
+    val_x = val_x.reshape(val_x.shape[0], -1)
 
     # NOTE: we are standardise using the training data;
     # this is not done in the design baselines code, but we are using
@@ -145,7 +148,7 @@ def smcdiffopt(
 
     training_config = {
         "batch_size": 256,
-        "num_epochs": 40_000,
+        "num_epochs": 15_001,
         "learning_rate": 1e-3,
     }
     
