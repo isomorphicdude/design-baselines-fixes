@@ -164,7 +164,7 @@ def smcdiffopt(
 
         def objective_fn(x):
             inv_transformed = scaler.inverse_transform(x.cpu().numpy())
-            return task.predict(np.argmax(inv_transformed, dim=-1))
+            return task.predict(np.argmax(inv_transformed, axis=-1))
 
     else:
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
