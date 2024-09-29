@@ -141,8 +141,8 @@ def smcdiffopt(
     val_dataset = TensorDataset(torch.tensor(val_data), torch.tensor(val_y))
 
     training_config = {
-        "batch_size": 128,
-        "num_epochs": 1000,
+        "batch_size": 256,
+        "num_epochs": 40_000,
         "learning_rate": 1e-3,
     }
     
