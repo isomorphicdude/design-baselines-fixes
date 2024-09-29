@@ -51,6 +51,7 @@ def create_sampler(
     rescale_timesteps,
     timestep_respacing="",
     device="cpu",
+    **kwargs,
 ):
 
     sampler = get_sampler(name=sampler)
@@ -70,6 +71,7 @@ def create_sampler(
         rescale_timesteps=rescale_timesteps,
         # use_timesteps=space_timesteps(steps, timestep_respacing),
         device=device,
+        **kwargs,
     )
 
 
