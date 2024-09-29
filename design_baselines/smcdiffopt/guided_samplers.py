@@ -151,9 +151,13 @@ class SMCDiffOpt(GaussianDiffusion):
         with torch.no_grad():
             for i, num_t in enumerate(reverse_ts):
                 print(f"Sampling at time {num_t}.")
-                y_new = self._get_obs(y_obs, i, num_particles, method="default")
+                if self.task == "inverse_problem":
+                    y_new = self._get_obs(y_obs, i, num_particles, method="default")
 
-                y_old = self._get_obs(y_obs, i - 1, num_particles, method="default")
+                    y_old = self._get_obs(y_obs, i - 1, num_particles, method="default")
+                elif self.task == "optimisation":
+                    y_new = None
+                    y_old = None
 
                 vec_t = (torch.ones(self.shape[0]) * (reverse_ts[i - 1])).to(x_t.device)
 
@@ -179,7 +183,6 @@ class SMCDiffOpt(GaussianDiffusion):
                     x_t.view(model_input_shape),
                     eps_pred,
                     method=sampling_method,
-                    y_t=y_new,
                 )  # (batch * num_particles, 3, 256, 256)
 
                 # x_new = x_new.clamp(-clamp_to, clamp_to)

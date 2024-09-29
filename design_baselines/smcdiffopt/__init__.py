@@ -110,6 +110,8 @@ def smcdiffopt(
         json.dump(params, f)
 
     # create task
+    logging.info("Creating task...")
+    logging.info(f"Task is: {task}, dimension is {task.x.shape[1]}")
     task = StaticGraphTask(
         task,
         relabel=task_relabel,
@@ -201,11 +203,14 @@ def smcdiffopt(
         
         
     # perform model-based optimization
+    logging.info("Performing model-based optimization...")
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(model_config["device"])
     diffusion_model.model.to(model_config["device"])
     diffusion_model.model.eval()
     x = diffusion_model.sample(
         x_start=x_start,
+        y_obs=None,
+        
     )
 
     # evaluate and save the results
