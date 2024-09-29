@@ -242,7 +242,7 @@ class SMCDiffOpt(GaussianDiffusion):
         """
 
         m = self.sqrt_alphas_cumprod[timestep]
-        sqrt_1m_alpha = self.sqrt_1m_alphas_cumprod[timestep]
+        sqrt_1m_alpha = self.sqrt_one_minus_alphas_cumprod[timestep]
 
         v = sqrt_1m_alpha**2
 
