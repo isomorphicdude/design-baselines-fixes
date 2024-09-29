@@ -85,4 +85,7 @@ setup(
 
         'online-reinforce=design_baselines.'
         'reinforce.online_experiments:cli',
+        
+        'smcdiffopt=design_baselines.'
+        'smcdiffopt.experiments:cli',
     )})
