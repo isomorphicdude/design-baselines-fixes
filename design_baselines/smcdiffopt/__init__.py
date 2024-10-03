@@ -100,6 +100,12 @@ logging.basicConfig(
     type=int,
     help="The seed to use for the experiment.",
 )
+@click.option(
+    "--num_timesteps",
+    default=1000,
+    type=int,
+    help="The number of timesteps to use in the diffusion model.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -110,7 +116,8 @@ def smcdiffopt(
     normalize_xs,
     evaluation_samples,
     beta_scaling,
-    seed
+    seed,
+    num_timesteps
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     params = dict(
@@ -189,7 +196,7 @@ def smcdiffopt(
 
     # initialise the model
     model_config = {
-        "steps": 1000,
+        "steps": num_timesteps,
         "shape": (1, np.prod(task.x.shape[1:])),
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
@@ -197,7 +204,7 @@ def smcdiffopt(
         "dynamic_threshold": False,
         "clip_denoised": False,
         "rescale_timesteps": False,
-        "timestep_respacing": 1000,
+        "timestep_respacing": num_timesteps,
         "device": "cuda",
         "scaler": scaler,
         "sampling_task": "optimisation",
@@ -205,7 +212,7 @@ def smcdiffopt(
     }
 
     dim_x = np.prod(task.x.shape[1:])
-    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=999)
+    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps-1)
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
