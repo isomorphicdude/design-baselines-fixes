@@ -21,11 +21,11 @@ from design_baselines.smcdiffopt.guided_samplers import SMCDiffOpt
 from design_baselines.smcdiffopt.nets import FullyConnectedWithTime
 from design_baselines.smcdiffopt.trainer import train_model
 
+from design_bench.datasets.discrete.tf_bind_8_dataset import TFBind8Dataset
+from design_bench.datasets.discrete.tf_bind_10_dataset import TFBind10Dataset
 from design_bench.datasets.continuous.superconductor_dataset import SuperconductorDataset
 from design_bench.datasets.continuous.ant_morphology_dataset import AntMorphologyDataset
 from design_bench.datasets.continuous.dkitty_morphology_dataset import DKittyMorphologyDataset
-from design_bench.datasets.discrete.tf_bind_8_dataset import TFBind8Dataset
-from design_bench.datasets.discrete.tf_bind_10_dataset import TFBind10Dataset
 
 # set up the logger for info, different from the design_baselines logger
 info_logger = logging.getLogger("info_logger")
@@ -178,7 +178,7 @@ def smcdiffopt(
 
     training_config = {
         "batch_size": 256,
-        "num_epochs": 2000,
+        "num_epochs": 5000,
         "learning_rate": 1e-3,
     }
 
@@ -235,6 +235,8 @@ def smcdiffopt(
         # if no pre-trained weights, train the model
         writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
         ckpt_dir = os.path.join(logging_dir, task_name)
+        os.makedirs(ckpt_dir, exist_ok=True)
+        
         losses = train_model(
             diffusion_model=diffusion_model,
             train_loader=train_loader,
