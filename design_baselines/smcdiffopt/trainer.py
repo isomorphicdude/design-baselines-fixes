@@ -27,7 +27,7 @@ def train_model(
     num_epochs: int,
     writer: SummaryWriter,
     device: str = "cpu",
-    logging_dir: str = "smcdiffopt",
+    ckpt_dir: str = "smcdiffopt",
 ):
     losses = []
     diffusion_model.model.to(device)
@@ -56,6 +56,6 @@ def train_model(
             logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
             torch.save(
                 diffusion_model.model.state_dict(),
-                os.path.join(logging_dir, f"model_{epoch+1}.pt"),
+                os.path.join(ckpt_dir, f"model_{epoch+1}.pt"),
             )
     return losses
