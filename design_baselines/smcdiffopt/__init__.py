@@ -75,7 +75,7 @@ logging.basicConfig(
 )
 @click.option(
     "--normalize-xs/--no-normalize-xs",
-    default=False,
+    default=True,
     type=bool,
     help="Whether to normalize the x values in the Offline MBO "
     "dataset before performing model-based optimization. "
@@ -88,6 +88,24 @@ logging.basicConfig(
     help="The samples to generate when solving the model-based "
     "optimization problem.",
 )
+@click.option(
+    "--beta-scaling",
+    default=200.0,
+    type=float,
+    help="The scaling factor for annealing schedule.",
+)
+@click.option(
+    "--seed",
+    default=0,
+    type=int,
+    help="The seed to use for the experiment.",
+)
+@click.option(
+    "--num_timesteps",
+    default=1000,
+    type=int,
+    help="The number of timesteps to use in the diffusion model.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -97,6 +115,9 @@ def smcdiffopt(
     normalize_ys,
     normalize_xs,
     evaluation_samples,
+    beta_scaling,
+    seed,
+    num_timesteps
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     params = dict(
@@ -114,7 +135,7 @@ def smcdiffopt(
         json.dump(params, f)
 
     # create task
-    task_name = task # for model loading
+    task_name = task  # for model loading
     logging.info("Creating task...")
     logging.info(f"Task is: {task}")
     task = StaticGraphTask(
@@ -165,7 +186,9 @@ def smcdiffopt(
     if task.is_discrete:
 
         def objective_fn(x):
-            inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(evaluation_samples, *task.x.shape[1:])
+            inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(
+                evaluation_samples, *task.x.shape[1:]
+            )
             return task.predict(inv_transformed)
 
     else:
@@ -173,7 +196,7 @@ def smcdiffopt(
 
     # initialise the model
     model_config = {
-        "steps": 1000,
+        "steps": num_timesteps,
         "shape": (1, np.prod(task.x.shape[1:])),
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
@@ -181,7 +204,7 @@ def smcdiffopt(
         "dynamic_threshold": False,
         "clip_denoised": False,
         "rescale_timesteps": False,
-        "timestep_respacing": 1000,
+        "timestep_respacing": num_timesteps,
         "device": "cuda",
         "scaler": scaler,
         "sampling_task": "optimisation",
@@ -189,7 +212,7 @@ def smcdiffopt(
     }
 
     dim_x = np.prod(task.x.shape[1:])
-    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=999)
+    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps-1)
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
@@ -200,15 +223,12 @@ def smcdiffopt(
         repo_id = "isomorphicdude/SMCDiffOpt"
         file_name = f"{task_name}.pt"
         download_path = hf_hub_download(repo_id, file_name)
-        nn_model.load_state_dict(
-            torch.load(
-                download_path, map_location="cpu"
-            )
-        )
-    except FileNotFoundError:
+        nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
+    except:
         logging.info("No pre-trained weights found, training model from scratch.")
         # if no pre-trained weights, train the model
         writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
+        ckpt_dir = os.path.join(logging_dir, task_name)
         losses = train_model(
             diffusion_model=diffusion_model,
             train_loader=train_loader,
@@ -219,18 +239,20 @@ def smcdiffopt(
             num_epochs=training_config["num_epochs"],
             writer=writer,
             device=model_config["device"],
-            logging_dir=logging_dir,
+            ckpt_dir=ckpt_dir,
         )
         # load
         nn_model.load_state_dict(
             torch.load(
-                os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"),
+                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
                 map_location="cpu",
             )
         )
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
         model_config["device"]
     )
@@ -242,6 +264,7 @@ def smcdiffopt(
         num_particles=evaluation_samples,
         sampling_method="default",
         resampling_method="systematic",
+        beta_scaling=beta_scaling,
     )
 
     # evaluate and save the results
@@ -258,15 +281,23 @@ def smcdiffopt(
     score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
     if task.is_normalized_y:
         score = task.denormalize_y(score)
-
-    logger.record("score", score, 1000, percentile=True)
+    
     logging.info(f"Full score: {score}")
-    logging.info(f"100 \% Percentile score: {np.percentile(score, 100)}")
-    logging.info(f"90 \% Percentile score: {np.percentile(score, 90)}")
-    logging.info(f"75 \% Percentile score: {np.percentile(score, 75)}")
-    logging.info(f"50 \% Percentile score: {np.percentile(score, 50)}")
-    logging.info(f"Min-Max normalized score: {np.mean( (score - np.min(score)) / (np.max(score) - np.min(score)) )}")
-
+    logger.record("score", score, 1000, percentile=True)
+    # calculate normalised score (y - y_min) / (y_max - y_min)
+    dataset_name = task_name.split("-")[0]
+    if dataset_name == "ChEMBL":
+        full_dataset = eval(f"{dataset_name}Dataset")(assay_chembl_id="CHEMBL3885882", standard_type="MCHC")
+    else:
+        full_dataset = eval(f"{task_name.split("-")[0]}Dataset")()
+    
+    full_data_min = full_dataset.y.min()
+    full_data_max = full_dataset.y.max()
+    percentiles = [100, 90, 75, 50]
+    for percentile in percentiles:
+        percent_best = np.percentile(score, percentile)
+        normalised_score = (percent_best - full_data_min) / (full_data_max - full_data_min)
+        logging.info(f"{percentile} percentile normalised score: {normalised_score}")
 
 if __name__ == "__main__":
     smcdiffopt()

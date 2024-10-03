@@ -35,7 +35,7 @@ class SMCDiffOpt(GaussianDiffusion):
         H_func=None,  # the inverse problem operator
         noiser=None,  # the noise model (as in DPS)
         objective_fn=None,  # the objective function
-        sampling_task="inverse_problem", # the task to be performed
+        sampling_task="inverse_problem",  # the task to be performed
     ):
         super().__init__(
             model,
@@ -54,13 +54,13 @@ class SMCDiffOpt(GaussianDiffusion):
         self.noiser = noiser
         self.objective_fn = objective_fn
         self.task = sampling_task
-        
+
     @property
     def anneal_schedule(self):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t)] 
+            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
@@ -80,6 +80,7 @@ class SMCDiffOpt(GaussianDiffusion):
         obs_new,
         obs_old,
         time_step: int,
+        beta_scaling: float = 200.0,
     ):
         """
         Computes the log G(x_t, x_{t+1}) in FK model.
@@ -90,6 +91,7 @@ class SMCDiffOpt(GaussianDiffusion):
             obs_new (torch.Tensor): shape (batch, dim_y)
             obs_old (torch.Tensor): shape (batch, dim_y)
             time_step (int): time step
+            beta_scaling (float): scaling factor for beta
         """
         if self.task == "inverse_problem":
             c_new = self.sqrt_alphas_cumprod[-(time_step + 1)]
@@ -98,12 +100,11 @@ class SMCDiffOpt(GaussianDiffusion):
             d_old = self.sqrt_one_minus_alphas_cumprod[-time_step]
             numerator = self._log_gauss_liklihood(x_new, obs_new, c_new, d_new)
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
-            
+
         elif self.task == "optimisation":
             numerator = self.objective_fn(x_new)
             denominator = self.objective_fn(x_old)
-            
-            
+
             # to device
             numerator = torch.tensor(numerator.numpy(), device=self.device)
             denominator = torch.tensor(denominator.numpy(), device=self.device)
@@ -111,9 +112,10 @@ class SMCDiffOpt(GaussianDiffusion):
         else:
             raise ValueError("Invalid task.")
 
-        return numerator * self.anneal_schedule(
-            time_step
-        ) - denominator * self.anneal_schedule(time_step - 1)
+        return (
+            numerator * self.anneal_schedule(time_step) * beta_scaling
+            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling
+        )
 
     def resample(self, weights, method="systematic"):
         if method == "systematic":
@@ -139,10 +141,11 @@ class SMCDiffOpt(GaussianDiffusion):
         score_output = kwargs.get("score_output", False)
         sampling_method = kwargs.get("sampling_method", "conditional")
         resampling_method = kwargs.get("resampling_method", "systematic")
+        beta_scaling = kwargs.get("beta_scaling", 200.0)
 
         ts = list(range(self.num_timesteps))[::-1]
         reverse_ts = ts[::-1]
-        
+
         d_t_func = lambda t: self.sqrt_1m_alphas_cumprod[-(t + 1)]
 
         model_fn = get_model_fn(self.model, train=False)
@@ -197,6 +200,7 @@ class SMCDiffOpt(GaussianDiffusion):
                     y_new,
                     y_old,
                     i,
+                    beta_scaling=beta_scaling,
                 ).view(self.shape[0], num_particles)
 
                 # normalise weights
@@ -245,42 +249,23 @@ class SMCDiffOpt(GaussianDiffusion):
             x_mean (torch.Tensor): mean of x_{t-1}
         """
 
-        m = extract_and_expand(
-            self.sqrt_alphas_cumprod,
-            timestep,
-            x_t
-        )
+        m = extract_and_expand(self.sqrt_alphas_cumprod, timestep, x_t)
         sqrt_1m_alpha = extract_and_expand(
-            self.sqrt_one_minus_alphas_cumprod,
-            timestep,
-            x_t
+            self.sqrt_one_minus_alphas_cumprod, timestep, x_t
         )
 
         v = sqrt_1m_alpha**2
 
-        alpha_cumprod = extract_and_expand(
-            self.alphas_cumprod,
-            timestep,
-            x_t
-        )
+        alpha_cumprod = extract_and_expand(self.alphas_cumprod, timestep, x_t)
 
-        alpha_cumprod_prev = extract_and_expand(
-            self.alphas_cumprod_prev,
-            timestep,
-            x_t
+        alpha_cumprod_prev = extract_and_expand(self.alphas_cumprod_prev, timestep, x_t)
+
+        m_prev = extract_and_expand(self.sqrt_alphas_cumprod_prev, timestep, x_t)
+
+        v_prev = (
+            extract_and_expand(self.sqrt_one_minus_alphas_cumprod_prev, timestep, x_t)
+            ** 2
         )
-        
-        m_prev = extract_and_expand(
-            self.sqrt_alphas_cumprod_prev,
-            timestep,
-            x_t
-        )
-        
-        v_prev = extract_and_expand(
-            self.sqrt_one_minus_alphas_cumprod_prev,
-            timestep,
-            x_t
-        ) ** 2
 
         x_0 = (x_t - sqrt_1m_alpha * eps_pred) / m
 
