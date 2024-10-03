@@ -297,8 +297,24 @@ def smcdiffopt(
 
         with open(os.path.join(f"{logging_dir}", f"solution.pkl"), "wb") as f:
             pickle.dump(solution, f)
+    if (
+        task_name == "DKittyMorphology-RandomForest-v0"
+        or task_name == "AntMorphology-RandomForest-v0"
+    ):
+        exact_task_name = f"{task_name.split('-')[0]}-Exact-v0"
+        exact_task = StaticGraphTask(
+            exact_task_name,
+            relabel=task_relabel,
+            dataset_kwargs=dict(
+                max_samples=task_max_samples, distribution=task_distribution
+            ),
+        )
+        score = exact_task.predict(
+            solution.reshape(evaluation_samples, *task.x.shape[1:])
+        )
+    else:
+        score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
 
-    score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
     if task.is_normalized_y:
         score = task.denormalize_y(score)
 
