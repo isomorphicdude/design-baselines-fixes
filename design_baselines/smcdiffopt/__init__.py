@@ -23,9 +23,13 @@ from design_baselines.smcdiffopt.trainer import train_model
 
 from design_bench.datasets.discrete.tf_bind_8_dataset import TFBind8Dataset
 from design_bench.datasets.discrete.tf_bind_10_dataset import TFBind10Dataset
-from design_bench.datasets.continuous.superconductor_dataset import SuperconductorDataset
+from design_bench.datasets.continuous.superconductor_dataset import (
+    SuperconductorDataset,
+)
 from design_bench.datasets.continuous.ant_morphology_dataset import AntMorphologyDataset
-from design_bench.datasets.continuous.dkitty_morphology_dataset import DKittyMorphologyDataset
+from design_bench.datasets.continuous.dkitty_morphology_dataset import (
+    DKittyMorphologyDataset,
+)
 
 # set up the logger for info, different from the design_baselines logger
 info_logger = logging.getLogger("info_logger")
@@ -123,7 +127,7 @@ def smcdiffopt(
     evaluation_samples,
     beta_scaling,
     seed,
-    num_timesteps
+    num_timesteps,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     params = dict(
@@ -218,7 +222,7 @@ def smcdiffopt(
     }
 
     dim_x = np.prod(task.x.shape[1:])
-    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps-1)
+    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
@@ -231,31 +235,39 @@ def smcdiffopt(
         download_path = hf_hub_download(repo_id, file_name)
         nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
     except:
-        logging.info("No pre-trained weights found, training model from scratch.")
-        # if no pre-trained weights, train the model
-        writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
+        # load from local weights
         ckpt_dir = os.path.join(logging_dir, task_name)
-        os.makedirs(ckpt_dir, exist_ok=True)
-        
-        losses = train_model(
-            diffusion_model=diffusion_model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            optimizer=torch.optim.Adam(
-                nn_model.parameters(), lr=training_config["learning_rate"]
-            ),
-            num_epochs=training_config["num_epochs"],
-            writer=writer,
-            device=model_config["device"],
-            ckpt_dir=ckpt_dir,
-        )
-        # load
-        nn_model.load_state_dict(
-            torch.load(
-                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
-                map_location="cpu",
+        try:
+            logging.info("Loading pre-trained weights from local...")
+            nn_model.load_state_dict(
+                torch.load(
+                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                    map_location="cpu",
+                )
             )
-        )
+        except:
+            logging.info("No pre-trained weights found, training model from scratch.")
+            writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
+            os.makedirs(ckpt_dir, exist_ok=True)
+
+            losses = train_model(
+                diffusion_model=diffusion_model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                optimizer=torch.optim.Adam(
+                    nn_model.parameters(), lr=training_config["learning_rate"]
+                ),
+                num_epochs=training_config["num_epochs"],
+                writer=writer,
+                device=model_config["device"],
+                ckpt_dir=ckpt_dir,
+            )
+            nn_model.load_state_dict(
+                torch.load(
+                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                    map_location="cpu",
+                )
+            )
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
@@ -289,23 +301,28 @@ def smcdiffopt(
     score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
     if task.is_normalized_y:
         score = task.denormalize_y(score)
-    
+
     logging.info(f"Full score: {score}")
     logger.record("score", score, 1000, percentile=True)
     # calculate normalised score (y - y_min) / (y_max - y_min)
     dataset_name = task_name.split("-")[0]
     if dataset_name == "ChEMBL":
-        full_dataset = eval(f"{dataset_name}Dataset")(assay_chembl_id="CHEMBL3885882", standard_type="MCHC")
+        full_dataset = eval(f"{dataset_name}Dataset")(
+            assay_chembl_id="CHEMBL3885882", standard_type="MCHC"
+        )
     else:
         full_dataset = eval(f"{dataset_name}Dataset")()
-    
+
     full_data_min = full_dataset.y.min()
     full_data_max = full_dataset.y.max()
     percentiles = [100, 90, 75, 50]
     for percentile in percentiles:
         percent_best = np.percentile(score, percentile)
-        normalised_score = (percent_best - full_data_min) / (full_data_max - full_data_min)
+        normalised_score = (percent_best - full_data_min) / (
+            full_data_max - full_data_min
+        )
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
+
 
 if __name__ == "__main__":
     smcdiffopt()
