@@ -2,6 +2,7 @@
 Implements helper functions for the diffusion models.
 Adapted from DPS.
 """
+
 import math
 from abc import ABC, abstractmethod
 
@@ -285,9 +286,6 @@ class LearnedRangeVarianceProcessor(VarianceProcessor):
         model_log_variance = frac * max_log + (1 - frac) * min_log
         model_variance = torch.exp(model_log_variance)
         return model_variance, model_log_variance
-    
-    
-
 
 
 # ================
@@ -330,7 +328,7 @@ def space_timesteps(num_timesteps, section_counts):
         section_counts = [int(x) for x in section_counts.split(",")]
     elif isinstance(section_counts, int):
         section_counts = [section_counts]
-    
+
     size_per = num_timesteps // len(section_counts)
     extra = num_timesteps % len(section_counts)
     start_idx = 0
@@ -353,6 +351,7 @@ def space_timesteps(num_timesteps, section_counts):
         all_steps += taken_steps
         start_idx += size
     return set(all_steps)
+
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
@@ -409,7 +408,7 @@ def extract_and_expand(array, n, target):
         array (np.ndarray): The array to extract from
         n (int): The index to extract
         target (torch.Tensor): The target tensor to expand to
-    
+
     Returns:
         torch.Tensor: The extracted and expanded tensor, same shape as target
     """

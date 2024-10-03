@@ -695,6 +695,7 @@ def make_table_from_solutions(dir, distribution, percentile, load):
         max_samples_to_performance = dict()
 
         for max_samples in sample_options:
+            # each number of samples has a dictionary of tasks
             max_samples_to_performance[max_samples] = dict()
 
             for task in tasks:
@@ -703,9 +704,10 @@ def make_table_from_solutions(dir, distribution, percentile, load):
                     max_samples_to_performance[max_samples][task][baseline] = list()
 
         for task, baseline in tqdm.tqdm(list(itertools.product(tasks, baselines))):
+            # iterate over all (task, baseline) pairs
             dirs = glob.glob(os.path.join(dir, f"{baseline}-{task}/*/*"))
             for d in [d for d in dirs if os.path.isdir(d)]:
-
+                # load saved solution from npy file
                 solution_files = glob.glob(os.path.join(d, '*/solution.npy'))
                 for current_solution in solution_files:
 
@@ -730,6 +732,7 @@ def make_table_from_solutions(dir, distribution, percentile, load):
                     if params["normalize_xs"]:
                         db_task.map_normalize_x()
 
+                    # compute the performance of the solution
                     scores = task_to_task[task].predict(np.load(current_solution))
 
                     for max_samples in sample_options:
@@ -746,6 +749,7 @@ def make_table_from_solutions(dir, distribution, percentile, load):
                     max_samples][task][baseline] = mean_perf
 
         correlation = np.zeros([len(sample_options), len(sample_options)])
+        
         for a_idx, b_idx in itertools.product(
                 range(len(sample_options)), range(len(sample_options))):
 
