@@ -94,6 +94,12 @@ logging.basicConfig(
     type=float,
     help="The scaling factor for annealing schedule.",
 )
+@click.option(
+    "--seed",
+    default=0,
+    type=int,
+    help="The seed to use for the experiment.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -104,6 +110,7 @@ def smcdiffopt(
     normalize_xs,
     evaluation_samples,
     beta_scaling,
+    seed
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     params = dict(
@@ -237,6 +244,8 @@ def smcdiffopt(
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
         model_config["device"]
     )
