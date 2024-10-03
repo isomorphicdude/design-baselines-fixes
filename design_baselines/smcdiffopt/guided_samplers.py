@@ -60,7 +60,7 @@ class SMCDiffOpt(GaussianDiffusion):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t)] 
+            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t+1)] 
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
