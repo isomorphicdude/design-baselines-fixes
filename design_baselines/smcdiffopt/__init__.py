@@ -21,6 +21,12 @@ from design_baselines.smcdiffopt.guided_samplers import SMCDiffOpt
 from design_baselines.smcdiffopt.nets import FullyConnectedWithTime
 from design_baselines.smcdiffopt.trainer import train_model
 
+from design_bench.datasets.continuous.superconductor_dataset import SuperconductorDataset
+from design_bench.datasets.continuous.ant_morphology_dataset import AntMorphologyDataset
+from design_bench.datasets.continuous.dkitty_morphology_dataset import DKittyMorphologyDataset
+from design_bench.datasets.discrete.tf_bind_8_dataset import TFBind8Dataset
+from design_bench.datasets.discrete.tf_bind_10_dataset import TFBind10Dataset
+
 # set up the logger for info, different from the design_baselines logger
 info_logger = logging.getLogger("info_logger")
 logging.basicConfig(
@@ -289,7 +295,7 @@ def smcdiffopt(
     if dataset_name == "ChEMBL":
         full_dataset = eval(f"{dataset_name}Dataset")(assay_chembl_id="CHEMBL3885882", standard_type="MCHC")
     else:
-        full_dataset = eval(f"{task_name.split("-")[0]}Dataset")()
+        full_dataset = eval(f"{dataset_name}Dataset")()
     
     full_data_min = full_dataset.y.min()
     full_data_max = full_dataset.y.max()
