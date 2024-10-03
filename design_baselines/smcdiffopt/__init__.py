@@ -75,7 +75,7 @@ logging.basicConfig(
 )
 @click.option(
     "--normalize-xs/--no-normalize-xs",
-    default=False,
+    default=True,
     type=bool,
     help="Whether to normalize the x values in the Offline MBO "
     "dataset before performing model-based optimization. "
@@ -88,6 +88,12 @@ logging.basicConfig(
     help="The samples to generate when solving the model-based "
     "optimization problem.",
 )
+@click.option(
+    "--beta-scaling",
+    default=200.0,
+    type=float,
+    help="The scaling factor for annealing schedule.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -97,6 +103,7 @@ def smcdiffopt(
     normalize_ys,
     normalize_xs,
     evaluation_samples,
+    beta_scaling,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     params = dict(
@@ -114,7 +121,7 @@ def smcdiffopt(
         json.dump(params, f)
 
     # create task
-    task_name = task # for model loading
+    task_name = task  # for model loading
     logging.info("Creating task...")
     logging.info(f"Task is: {task}")
     task = StaticGraphTask(
@@ -165,7 +172,9 @@ def smcdiffopt(
     if task.is_discrete:
 
         def objective_fn(x):
-            inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(evaluation_samples, *task.x.shape[1:])
+            inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(
+                evaluation_samples, *task.x.shape[1:]
+            )
             return task.predict(inv_transformed)
 
     else:
@@ -200,15 +209,12 @@ def smcdiffopt(
         repo_id = "isomorphicdude/SMCDiffOpt"
         file_name = f"{task_name}.pt"
         download_path = hf_hub_download(repo_id, file_name)
-        nn_model.load_state_dict(
-            torch.load(
-                download_path, map_location="cpu"
-            )
-        )
-    except FileNotFoundError:
+        nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
+    except:
         logging.info("No pre-trained weights found, training model from scratch.")
         # if no pre-trained weights, train the model
         writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
+        ckpt_dir = os.path.join(logging_dir, task_name)
         losses = train_model(
             diffusion_model=diffusion_model,
             train_loader=train_loader,
@@ -219,12 +225,12 @@ def smcdiffopt(
             num_epochs=training_config["num_epochs"],
             writer=writer,
             device=model_config["device"],
-            logging_dir=logging_dir,
+            ckpt_dir=ckpt_dir,
         )
         # load
         nn_model.load_state_dict(
             torch.load(
-                os.path.join(logging_dir, f"model_{training_config['num_epochs']}.pt"),
+                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
                 map_location="cpu",
             )
         )
@@ -242,6 +248,7 @@ def smcdiffopt(
         num_particles=evaluation_samples,
         sampling_method="default",
         resampling_method="systematic",
+        beta_scaling=beta_scaling,
     )
 
     # evaluate and save the results
@@ -265,7 +272,9 @@ def smcdiffopt(
     logging.info(f"90 \% Percentile score: {np.percentile(score, 90)}")
     logging.info(f"75 \% Percentile score: {np.percentile(score, 75)}")
     logging.info(f"50 \% Percentile score: {np.percentile(score, 50)}")
-    logging.info(f"Min-Max normalized score: {np.mean( (score - np.min(score)) / (np.max(score) - np.min(score)) )}")
+    logging.info(
+        f"Min-Max normalized score: {np.mean( (score - np.min(score)) / (np.max(score) - np.min(score)) )}"
+    )
 
 
 if __name__ == "__main__":
