@@ -274,17 +274,23 @@ def smcdiffopt(
     score = task.predict(solution.reshape(evaluation_samples, *task.x.shape[1:]))
     if task.is_normalized_y:
         score = task.denormalize_y(score)
-
-    logger.record("score", score, 1000, percentile=True)
+    
     logging.info(f"Full score: {score}")
-    logging.info(f"100 \% Percentile score: {np.percentile(score, 100)}")
-    logging.info(f"90 \% Percentile score: {np.percentile(score, 90)}")
-    logging.info(f"75 \% Percentile score: {np.percentile(score, 75)}")
-    logging.info(f"50 \% Percentile score: {np.percentile(score, 50)}")
-    logging.info(
-        f"Min-Max normalized score: {np.mean( (score - np.min(score)) / (np.max(score) - np.min(score)) )}"
-    )
-
+    logger.record("score", score, 1000, percentile=True)
+    # calculate normalised score (y - y_min) / (y_max - y_min)
+    dataset_name = task_name.split("-")[0]
+    if dataset_name == "ChEMBL":
+        full_dataset = eval(f"{dataset_name}Dataset")(assay_chembl_id="CHEMBL3885882", standard_type="MCHC")
+    else:
+        full_dataset = eval(f"{task_name.split("-")[0]}Dataset")()
+    
+    full_data_min = full_dataset.y.min()
+    full_data_max = full_dataset.y.max()
+    percentiles = [100, 90, 75, 50]
+    for percentile in percentiles:
+        percent_best = np.percentile(score, percentile)
+        normalised_score = (percent_best - full_data_min) / (full_data_max - full_data_min)
+        logging.info(f"{percentile} percentile normalised score: {normalised_score}")
 
 if __name__ == "__main__":
     smcdiffopt()
