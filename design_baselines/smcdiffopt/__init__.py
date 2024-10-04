@@ -320,6 +320,7 @@ def smcdiffopt(
 
     logging.info(f"Full score: {score}")
     logger.record("score", score, 1000, percentile=True)
+    
     # calculate normalised score (y - y_min) / (y_max - y_min)
     dataset_name = task_name.split("-")[0]
     if dataset_name == "ChEMBL":
@@ -332,12 +333,16 @@ def smcdiffopt(
     full_data_min = full_dataset.y.min()
     full_data_max = full_dataset.y.max()
     percentiles = [100, 90, 75, 50]
-    for percentile in percentiles:
+    norm_score_list = np.zeros(len(percentiles), dtype=np.float64)
+    for i, percentile in enumerate(percentiles):
         percent_best = np.percentile(score, percentile)
         normalised_score = (percent_best - full_data_min) / (
             full_data_max - full_data_min
         )
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
+        norm_score_list[i] = normalised_score
+        
+    np.save(os.path.join(f"{logging_dir}", f"norm_score_{seed}.npy"), norm_score_list)
 
 
 if __name__ == "__main__":
