@@ -5,6 +5,7 @@ import math
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
+import tensorflow as tf
 import click
 import json
 import numpy as np
@@ -130,6 +131,7 @@ def smcdiffopt(
     num_timesteps,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
+    tf.random.set_seed(seed)
     params = dict(
         logging_dir=logging_dir,
         task=task,
