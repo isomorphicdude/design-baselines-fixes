@@ -133,6 +133,8 @@ def smcdiffopt(
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     params = dict(
         logging_dir=logging_dir,
         task=task,
@@ -274,8 +276,6 @@ def smcdiffopt(
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
         model_config["device"]
     )
@@ -347,7 +347,6 @@ def smcdiffopt(
         
     with open(os.path.join(f"{logging_dir}", f"norm_score.json"), "w") as f:
         json.dump(norm_score_dict, f, sort_keys=True, indent=4)
-
 
 if __name__ == "__main__":
     smcdiffopt()
