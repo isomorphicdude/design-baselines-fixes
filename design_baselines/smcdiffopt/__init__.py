@@ -345,7 +345,7 @@ def smcdiffopt(
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
         norm_score_dict[percentile] = normalised_score
         
-    with open(os.path.join(f"{logging_dir}", f"norm_score.json"), "w") as f:
+    with open(os.path.join(f"{logging_dir}", f"norm_score_{seed}.json"), "w") as f:
         json.dump(norm_score_dict, f, sort_keys=True, indent=4)
 
 if __name__ == "__main__":
