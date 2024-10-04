@@ -1,11 +1,13 @@
 """Implements utility functions for computing scores for SMCDiffOpt from saved scores."""
 
 import os
-
+import click
 import json
 import numpy as np
 
-def compute_scores_from_dir(dir="smcdiffopt"):
+@click.command()
+@click.option("--dir", default="smcdiffopt", help="Directory containing saved scores.")
+def compute_scores_from_dir(dir):
     """Computes mean and std of scores from a directory containing saved scores."""
     percentile_keys = ["50", "75", "90", "100"]
     scores = {k: [] for k in percentile_keys}
@@ -31,7 +33,9 @@ def compute_scores_from_dir(dir="smcdiffopt"):
             
     return mean_scores, std_scores, ci_scores
             
-    
+
+if __name__ == "__main__":
+    compute_scores_from_dir()
                
                
                
