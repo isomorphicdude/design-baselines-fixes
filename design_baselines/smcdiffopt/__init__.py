@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 import tensorflow as tf
 import click
+import pickle
 import json
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -335,16 +336,17 @@ def smcdiffopt(
     full_data_min = full_dataset.y.min()
     full_data_max = full_dataset.y.max()
     percentiles = [100, 90, 75, 50]
-    norm_score_list = np.zeros(len(percentiles), dtype=np.float64)
+    norm_score_dict = {perc: None for perc in percentiles}
     for i, percentile in enumerate(percentiles):
         percent_best = np.percentile(score, percentile)
         normalised_score = (percent_best - full_data_min) / (
             full_data_max - full_data_min
         )
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
-        norm_score_list[i] = normalised_score
+        norm_score_dict[percentile] = normalised_score
         
-    np.save(os.path.join(f"{logging_dir}", f"norm_score_{seed}.npy"), norm_score_list)
+    with open(os.path.join(f"{logging_dir}", f"norm_score.json"), "w") as f:
+        json.dump(norm_score_dict, f, sort_keys=True, indent=4)
 
 
 if __name__ == "__main__":
