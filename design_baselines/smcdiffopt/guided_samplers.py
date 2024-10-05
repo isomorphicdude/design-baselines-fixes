@@ -81,6 +81,8 @@ class SMCDiffOpt(GaussianDiffusion):
         obs_old,
         time_step: int,
         beta_scaling: float = 200.0,
+        eps_pred_new=None,
+        eps_pred_old=None,
     ):
         """
         Computes the log G(x_t, x_{t+1}) in FK model.
@@ -102,8 +104,18 @@ class SMCDiffOpt(GaussianDiffusion):
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
 
         elif self.task == "optimisation":
-            numerator = self.objective_fn(x_new)
-            denominator = self.objective_fn(x_old)
+            x_new_0_pred = self._proposal_X_t(
+                time_step, x_new, eps_pred_new, return_std=True
+            )[-1]
+            
+            x_old_0_pred = self._proposal_X_t(
+                time_step - 1, x_old, eps_pred_old, return_std=True
+            )[-1]
+            # x_new_0_pred = x_new
+            # x_old_0_pred = x_old
+            
+            numerator = self.objective_fn(x_new_0_pred)
+            denominator = self.objective_fn(x_old_0_pred)
 
             # to device
             numerator = torch.tensor(numerator.numpy(), device=self.device)
@@ -191,6 +203,9 @@ class SMCDiffOpt(GaussianDiffusion):
                     eps_pred,
                     method=sampling_method,
                 )  # (batch * num_particles, 3, 256, 256)
+                
+                new_vec_t = (torch.ones(self.shape[0]) * (reverse_ts[i])).to(x_t.device)
+                eps_pred_new = model_fn(x_new.view(*model_input_shape), new_vec_t)
 
                 # x_new = x_new.clamp(-clamp_to, clamp_to)
                 x_input_shape = (self.shape[0] * num_particles, -1)
@@ -201,6 +216,8 @@ class SMCDiffOpt(GaussianDiffusion):
                     y_old,
                     i,
                     beta_scaling=beta_scaling,
+                    eps_pred_new=eps_pred_new,
+                    eps_pred_old=eps_pred,
                 ).view(self.shape[0], num_particles)
 
                 # normalise weights
@@ -245,8 +262,8 @@ class SMCDiffOpt(GaussianDiffusion):
             eps_pred (torch.Tensor): epsilon_t
 
         Returns:
-            x_{t-1} (torch.Tensor): x_{t-1}
-            x_mean (torch.Tensor): mean of x_{t-1}
+            (tuple): tuple containing: new_x, x_mean; and 
+            if return_std is True, also returns std and x_0
         """
 
         m = extract_and_expand(self.sqrt_alphas_cumprod, timestep, x_t)
@@ -279,7 +296,7 @@ class SMCDiffOpt(GaussianDiffusion):
 
         new_x = x_mean + std * torch.randn_like(x_mean, device=x_t.device)
         if return_std:
-            return new_x, x_mean, std
+            return new_x, x_mean, std, x_0
         else:
             return new_x, x_mean
 
