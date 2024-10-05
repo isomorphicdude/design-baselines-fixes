@@ -104,15 +104,15 @@ class SMCDiffOpt(GaussianDiffusion):
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
 
         elif self.task == "optimisation":
-            x_new_0_pred = self._proposal_X_t(
-                time_step, x_new, eps_pred_new, return_std=True
-            )[-1]
+            # x_new_0_pred = self._proposal_X_t(
+            #     time_step, x_new, eps_pred_new, return_std=True
+            # )[-1]
             
-            x_old_0_pred = self._proposal_X_t(
-                time_step - 1, x_old, eps_pred_old, return_std=True
-            )[-1]
-            # x_new_0_pred = x_new
-            # x_old_0_pred = x_old
+            # x_old_0_pred = self._proposal_X_t(
+            #     time_step - 1, x_old, eps_pred_old, return_std=True
+            # )[-1]
+            x_new_0_pred = x_new
+            x_old_0_pred = x_old
             
             numerator = self.objective_fn(x_new_0_pred)
             denominator = self.objective_fn(x_old_0_pred)
