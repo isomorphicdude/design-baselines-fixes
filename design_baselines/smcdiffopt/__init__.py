@@ -345,6 +345,7 @@ def smcdiffopt(
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
         norm_score_dict[percentile] = normalised_score
 
+    tf.io.gfile.makedirs(os.path.join(f"{logging_dir}", task_name))
     with open(
         os.path.join(f"{logging_dir}", task_name, f"norm_score_{seed}.json"), "w"
     ) as f:
