@@ -168,6 +168,8 @@ def smcdiffopt(
                 standard_type=standard_type,
             ),
         )
+        # for downloading
+        task_name = assay_chembl_id
     else:
         task = StaticGraphTask(
             task,
