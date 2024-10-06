@@ -231,6 +231,7 @@ def smcdiffopt(
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
+    writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
     # try load weights of pre-trained diffusion model from logging directory
     try:
@@ -252,7 +253,6 @@ def smcdiffopt(
             )
         except:
             logging.info("No pre-trained weights found, training model from scratch.")
-            writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
             os.makedirs(ckpt_dir, exist_ok=True)
 
             losses = train_model(
