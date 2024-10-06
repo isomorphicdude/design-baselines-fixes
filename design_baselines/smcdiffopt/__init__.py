@@ -288,6 +288,7 @@ def smcdiffopt(
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
+        writer=writer,
     )
 
     # evaluate and save the results
