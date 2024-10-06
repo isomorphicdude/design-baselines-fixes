@@ -229,7 +229,8 @@ class SMCDiffOpt(GaussianDiffusion):
                     log_weights, dim=1, keepdim=True
                 )
                 
-                ess = torch.exp(-2 * log_weights).sum()
+                # ESS = 1 / sum(w_i^2)
+                ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()  
                 writer.add_scalar("Objective/ess", ess, i)
 
                 if i != len(reverse_ts) - 1:
