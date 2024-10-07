@@ -5,7 +5,9 @@ import math
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
+import tensorflow as tf
 import click
+import pickle
 import json
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -130,6 +132,9 @@ def smcdiffopt(
     num_timesteps,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
+    tf.random.set_seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     params = dict(
         logging_dir=logging_dir,
         task=task,
@@ -148,13 +153,31 @@ def smcdiffopt(
     task_name = task  # for model loading
     logging.info("Creating task...")
     logging.info(f"Task is: {task}")
-    task = StaticGraphTask(
-        task,
-        relabel=task_relabel,
-        dataset_kwargs=dict(
-            max_samples=task_max_samples, distribution=task_distribution
-        ),
-    )
+
+    if "ChEMBL" in task:
+        assay_chembl_id = "CHEMBL3885882"
+        standard_type = "MCHC"
+        task_name = f"ChEMBL_{standard_type}_{assay_chembl_id}_MorganFingerprint-RandomForest-v0"
+        task = StaticGraphTask(
+            task_name,
+            relabel=task_relabel,
+            dataset_kwargs=dict(
+                max_samples=task_max_samples,
+                distribution=task_distribution,
+                assay_chembl_id=assay_chembl_id,
+                standard_type=standard_type,
+            ),
+        )
+        # for downloading
+        task_name = assay_chembl_id
+    else:
+        task = StaticGraphTask(
+            task,
+            relabel=task_relabel,
+            dataset_kwargs=dict(
+                max_samples=task_max_samples, distribution=task_distribution
+            ),
+        )
     logging.info(f"Dimension is {task.x.shape[1]}")
 
     if task.is_discrete:
@@ -182,7 +205,7 @@ def smcdiffopt(
 
     training_config = {
         "batch_size": 256,
-        "num_epochs": 5000,
+        "num_epochs": 15000,
         "learning_rate": 1e-3,
     }
 
@@ -226,6 +249,7 @@ def smcdiffopt(
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
+    writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
     # try load weights of pre-trained diffusion model from logging directory
     try:
@@ -247,7 +271,6 @@ def smcdiffopt(
             )
         except:
             logging.info("No pre-trained weights found, training model from scratch.")
-            writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
             os.makedirs(ckpt_dir, exist_ok=True)
 
             losses = train_model(
@@ -271,8 +294,6 @@ def smcdiffopt(
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
         model_config["device"]
     )
@@ -285,6 +306,7 @@ def smcdiffopt(
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
+        writer=writer,
     )
 
     # evaluate and save the results
@@ -320,24 +342,32 @@ def smcdiffopt(
 
     logging.info(f"Full score: {score}")
     logger.record("score", score, 1000, percentile=True)
+
     # calculate normalised score (y - y_min) / (y_max - y_min)
     dataset_name = task_name.split("-")[0]
-    if dataset_name == "ChEMBL":
-        full_dataset = eval(f"{dataset_name}Dataset")(
-            assay_chembl_id="CHEMBL3885882", standard_type="MCHC"
-        )
+    if "ChEMBL" in task_name:
+        from design_bench.datasets.discrete.chembl_dataset import ChEMBLDataset
+        chembl_dataset = ChEMBLDataset(assay_chembl_id="CHEMBL3885882", standard_type="MCHC")
     else:
         full_dataset = eval(f"{dataset_name}Dataset")()
 
     full_data_min = full_dataset.y.min()
     full_data_max = full_dataset.y.max()
     percentiles = [100, 90, 75, 50]
-    for percentile in percentiles:
+    norm_score_dict = {perc: None for perc in percentiles}
+    for i, percentile in enumerate(percentiles):
         percent_best = np.percentile(score, percentile)
         normalised_score = (percent_best - full_data_min) / (
             full_data_max - full_data_min
         )
         logging.info(f"{percentile} percentile normalised score: {normalised_score}")
+        norm_score_dict[percentile] = normalised_score
+
+    tf.io.gfile.makedirs(os.path.join(f"{logging_dir}", task_name))
+    with open(
+        os.path.join(f"{logging_dir}", task_name, f"norm_score_{seed}.json"), "w"
+    ) as f:
+        json.dump(norm_score_dict, f, sort_keys=True, indent=4)
 
 
 if __name__ == "__main__":
