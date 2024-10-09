@@ -118,6 +118,12 @@ logging.basicConfig(
     type=int,
     help="The number of timesteps to use in the diffusion model.",
 )
+@click.option(
+    "--retrain_model",
+    default=False,
+    type=bool,
+    help="Whether to retrain the model from scratch.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -130,6 +136,7 @@ def smcdiffopt(
     beta_scaling,
     seed,
     num_timesteps,
+    retrain_model,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
@@ -252,45 +259,53 @@ def smcdiffopt(
     writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
     # try load weights of pre-trained diffusion model from logging directory
-    try:
-        logging.info("Loading pre-trained weights.")
-        repo_id = "isomorphicdude/SMCDiffOpt"
-        file_name = f"{task_name}.pt"
-        download_path = hf_hub_download(repo_id, file_name)
-        nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
-    except:
-        # load from local weights
-        ckpt_dir = os.path.join(logging_dir, task_name)
+    ckpt_dir = os.path.join(logging_dir, task_name)
+    def retrain():
+        os.makedirs(ckpt_dir, exist_ok=True)
+        losses = train_model(
+            diffusion_model=diffusion_model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=torch.optim.Adam(
+                nn_model.parameters(), lr=training_config["learning_rate"]
+            ),
+            num_epochs=training_config["num_epochs"],
+            writer=writer,
+            device=model_config["device"],
+            ckpt_dir=ckpt_dir,
+        )
+        nn_model.load_state_dict(
+            torch.load(
+                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                map_location="cpu",
+            )
+        )
+        return losses
+    if not retrain_model:
         try:
-            logging.info("Loading pre-trained weights from local...")
-            nn_model.load_state_dict(
-                torch.load(
-                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
-                    map_location="cpu",
-                )
-            )
+            logging.info("Loading pre-trained weights.")
+            repo_id = "isomorphicdude/SMCDiffOpt"
+            file_name = f"{task_name}.pt"
+            download_path = hf_hub_download(repo_id, file_name)
+            nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
         except:
-            logging.info("No pre-trained weights found, training model from scratch.")
-            os.makedirs(ckpt_dir, exist_ok=True)
-
-            losses = train_model(
-                diffusion_model=diffusion_model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                optimizer=torch.optim.Adam(
-                    nn_model.parameters(), lr=training_config["learning_rate"]
-                ),
-                num_epochs=training_config["num_epochs"],
-                writer=writer,
-                device=model_config["device"],
-                ckpt_dir=ckpt_dir,
-            )
-            nn_model.load_state_dict(
-                torch.load(
-                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
-                    map_location="cpu",
+            # load from local weights
+            try:
+                logging.info("Loading pre-trained weights from local...")
+                nn_model.load_state_dict(
+                    torch.load(
+                        os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                        map_location="cpu",
+                    )
                 )
-            )
+            except:
+                logging.info("No pre-trained weights found, training model from scratch.")
+                retrain()
+    else:
+        retrain()
+            
+    
+            
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
