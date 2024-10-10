@@ -84,6 +84,7 @@ class SMCDiffOpt(GaussianDiffusion):
         eps_pred_new=None,
         eps_pred_old=None,
         writer=None,
+        seed=None,
     ):
         """
         Computes the log G(x_t, x_{t+1}) in FK model.
@@ -122,7 +123,7 @@ class SMCDiffOpt(GaussianDiffusion):
             numerator = torch.tensor(numerator.numpy(), device=self.device)
             denominator = torch.tensor(denominator.numpy(), device=self.device)
             print(f"Iteration {time_step}, mean value: {numerator.mean()}")
-            writer.add_scalar("Objective/mean", numerator.mean(), time_step)
+            writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
 
@@ -157,6 +158,8 @@ class SMCDiffOpt(GaussianDiffusion):
         resampling_method = kwargs.get("resampling_method", "systematic")
         beta_scaling = kwargs.get("beta_scaling", 200.0)
         writer = kwargs.get("writer", None)
+        seed = kwargs.get("seed", None)
+        assert seed is not None, "Seed must be provided."
 
         ts = list(range(self.num_timesteps))[::-1]
         reverse_ts = ts[::-1]
@@ -222,6 +225,7 @@ class SMCDiffOpt(GaussianDiffusion):
                     eps_pred_new=eps_pred_new,
                     eps_pred_old=eps_pred,
                     writer=writer,
+                    seed=seed,
                 ).view(self.shape[0], num_particles)
 
                 # normalise weights
@@ -231,7 +235,7 @@ class SMCDiffOpt(GaussianDiffusion):
                 
                 # ESS = 1 / sum(w_i^2)
                 ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()  
-                writer.add_scalar("Objective/ess", ess, i)
+                writer.add_scalar(f"ESS_seed{seed}", ess, i)
 
                 if i != len(reverse_ts) - 1:
                     resample_idx = self.resample(
