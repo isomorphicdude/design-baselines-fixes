@@ -237,7 +237,7 @@ class SMCDiffOpt(GaussianDiffusion):
                 ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()  
                 writer.add_scalar(f"ESS_seed{seed}", ess, i)
 
-                if i != len(reverse_ts) - 1:
+                if i != len(reverse_ts) - 1 and ess < 0.5 * num_particles:
                     resample_idx = self.resample(
                         torch.exp(log_weights).view(-1), method=resampling_method
                     )
