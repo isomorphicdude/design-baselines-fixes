@@ -256,7 +256,7 @@ def smcdiffopt(
     diffusion_model = create_sampler(
         sampler="smcdiffopt", model=nn_model, **model_config
     )
-    writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
+    writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs", seed))
 
     # try load weights of pre-trained diffusion model from logging directory
     ckpt_dir = os.path.join(logging_dir, task_name)
