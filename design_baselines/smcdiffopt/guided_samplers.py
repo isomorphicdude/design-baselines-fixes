@@ -129,8 +129,8 @@ class SMCDiffOpt(GaussianDiffusion):
 
         return (
             # with dilation path
-            numerator * self.anneal_schedule(time_step) * beta_scaling - torch.log(self.anneal_schedule(time_step))
-            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling + torch.log(self.anneal_schedule(time_step - 1))
+            numerator * self.anneal_schedule(time_step) * beta_scaling - math.log(self.anneal_schedule(time_step))
+            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling + math.log(self.anneal_schedule(time_step - 1))
         )
 
     def resample(self, weights, method="systematic"):
