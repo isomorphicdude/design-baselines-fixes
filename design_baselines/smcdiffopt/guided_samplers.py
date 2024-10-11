@@ -128,8 +128,9 @@ class SMCDiffOpt(GaussianDiffusion):
             raise ValueError("Invalid task.")
 
         return (
-            numerator * self.anneal_schedule(time_step) * beta_scaling
-            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling
+            # with dilation path
+            numerator * self.anneal_schedule(time_step) * beta_scaling - torch.log(self.anneal_schedule(time_step))
+            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling + torch.log(self.anneal_schedule(time_step - 1))
         )
 
     def resample(self, weights, method="systematic"):
