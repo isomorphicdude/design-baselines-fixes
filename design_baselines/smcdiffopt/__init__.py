@@ -124,6 +124,12 @@ logging.basicConfig(
     type=bool,
     help="Whether to retrain the model from scratch.",
 )
+@click.option(
+    "--noise_sample_size",
+    default=10,
+    type=int,
+    help="The number of samples to use for noise estimation.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -137,6 +143,7 @@ def smcdiffopt(
     seed,
     num_timesteps,
     retrain_model,
+    noise_sample_size,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
@@ -249,6 +256,7 @@ def smcdiffopt(
         "scaler": scaler,
         "sampling_task": "optimisation",
         "objective_fn": objective_fn,
+        "noise_sample_size": noise_sample_size,
     }
 
     dim_x = np.prod(task.x.shape[1:])

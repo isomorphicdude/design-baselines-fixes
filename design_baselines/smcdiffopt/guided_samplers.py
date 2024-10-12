@@ -36,6 +36,7 @@ class SMCDiffOpt(GaussianDiffusion):
         noiser=None,  # the noise model (as in DPS)
         objective_fn=None,  # the objective function
         sampling_task="inverse_problem",  # the task to be performed
+        noise_sample_size=10,
     ):
         super().__init__(
             model,
@@ -54,6 +55,7 @@ class SMCDiffOpt(GaussianDiffusion):
         self.noiser = noiser
         self.objective_fn = objective_fn
         self.task = sampling_task
+        self.noise_sample_size = noise_sample_size
 
     @property
     def anneal_schedule(self):
@@ -96,6 +98,10 @@ class SMCDiffOpt(GaussianDiffusion):
             obs_old (torch.Tensor): shape (batch, dim_y)
             time_step (int): time step
             beta_scaling (float): scaling factor for beta
+            eps_pred_new (torch.Tensor): network prediction for noise at time t
+            eps_pred_old (torch.Tensor): network prediction for noise at time t+1
+            writer (SummaryWriter): tensorboard writer
+            seed (int): random seed
         """
         if self.task == "inverse_problem":
             c_new = self.sqrt_alphas_cumprod[-(time_step + 1)]
@@ -105,19 +111,27 @@ class SMCDiffOpt(GaussianDiffusion):
             numerator = self._log_gauss_liklihood(x_new, obs_new, c_new, d_new)
             denominator = self._log_gauss_liklihood(x_old, obs_old, c_old, d_old)
 
-        elif self.task == "optimisation":
-            x_new_0_pred = self._proposal_X_t(
+        elif self.task == "optimisation": 
+            # use x_mean at each time step
+            _, x_new_0_pred, std_new, _ = self._proposal_X_t(
                 time_step, x_new, eps_pred_new, return_std=True
-            )[-1]
+            )
             
-            x_old_0_pred = self._proposal_X_t(
+            _, x_old_0_pred, std_old, _ = self._proposal_X_t(
                 time_step - 1, x_old, eps_pred_old, return_std=True
-            )[-1]
+            )
             # x_new_0_pred = x_new
             # x_old_0_pred = x_old
             
-            numerator = self.objective_fn(x_new_0_pred)
-            denominator = self.objective_fn(x_old_0_pred)
+            # sample new random vectors
+            new_noise = torch.randn((x_new.shape[0], self.noise_sample_size, x_new.shape[1]), device=x_new.device)
+            old_noise = torch.randn((x_old.shape[0], self.noise_sample_size, x_old.shape[1]), device=x_old.device)
+            
+            # compute objective and take mean
+            numerator = self.objective_fn(x_new_0_pred + std_new * new_noise).mean(dim=1)
+            denominator = self.objective_fn(x_old_0_pred + std_old * old_noise).mean(dim=1)
+            # numerator = self.objective_fn(x_new_0_pred)
+            # denominator = self.objective_fn(x_old_0_pred)
 
             # to device
             numerator = torch.tensor(numerator.numpy(), device=self.device)
@@ -126,6 +140,12 @@ class SMCDiffOpt(GaussianDiffusion):
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
+        
+        return (
+            # original
+            numerator * self.anneal_schedule(time_step) * beta_scaling
+            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling
+        )
 
         # return (
         #     # with dilation path
@@ -133,10 +153,10 @@ class SMCDiffOpt(GaussianDiffusion):
         #     - denominator * self.anneal_schedule(time_step - 1) * beta_scaling + math.log(self.anneal_schedule(time_step - 1))
         # )
         
-        return (
-            # without annealing
-            numerator * beta_scaling - denominator * beta_scaling
-        )
+        # return (
+        #     # without annealing
+        #     numerator * beta_scaling - denominator * beta_scaling
+        # )
 
     def resample(self, weights, method="systematic"):
         if method == "systematic":
@@ -437,3 +457,51 @@ class SMCDiffOpt(GaussianDiffusion):
         """
         # if method == "default":
         return obs * self.sqrt_alphas_cumprod[-(t + 1)]
+
+# implements SVDD in Li et al. 2024
+# Derivative-Free Guidance in Continuous and Discrete Diffusion Models with Soft Value-Based Decoding
+@register_sampler("svdd")
+class SVDD(GaussianDiffusion):
+
+    def __init__(
+        self,
+        model,
+        betas,
+        shape,
+        model_mean_type,
+        model_var_type,
+        dynamic_threshold,
+        clip_denoised,
+        rescale_timesteps,
+        device="cpu",
+        eta=1,
+        scaler=None,
+        H_func=None,  # the inverse problem operator
+        noiser=None,  # the noise model (as in DPS)
+        objective_fn=None,  # the objective function
+        sampling_task="inverse_problem",  # the task to be performed
+    ):
+        super().__init__(
+            model,
+            betas,
+            shape,
+            model_mean_type,
+            model_var_type,
+            dynamic_threshold,
+            clip_denoised,
+            rescale_timesteps,
+            device,
+            eta,
+            scaler,
+        )
+        self.H_func = H_func
+        self.noiser = noiser
+        self.objective_fn = objective_fn
+        self.task = sampling_task
+
+    @property
+    def anneal_schedule(self):
+        if self.task == "inverse_problem":
+            return lambda t: 1.0
+        elif self.task == "optimisation":
+            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
