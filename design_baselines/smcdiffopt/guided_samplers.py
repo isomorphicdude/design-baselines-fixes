@@ -124,18 +124,28 @@ class SMCDiffOpt(GaussianDiffusion):
             # x_old_0_pred = x_old
             
             # sample new random vectors
-            new_noise = torch.randn((x_new.shape[0], self.noise_sample_size, x_new.shape[1]), device=x_new.device)
-            old_noise = torch.randn((x_old.shape[0], self.noise_sample_size, x_old.shape[1]), device=x_old.device)
+            expanded_shape = (x_new.shape[0], self.noise_sample_size, x_new.shape[1])
+            new_noise = torch.randn(expanded_shape, device=x_new.device)
+            old_noise = torch.randn(expanded_shape, device=x_old.device)
             
             # compute objective and take mean
-            numerator = self.objective_fn(x_new_0_pred.repeat(1, self.noise_sample_size, 1) + std_new * new_noise).mean(dim=1)
-            denominator = self.objective_fn(x_old_0_pred.repeat(1, self.noise_sample_size, 1) + std_old * old_noise).mean(dim=1)
+            new_obj_input = x_new_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1) + std_new.flatten()[0] * new_noise
+            old_obj_input = x_old_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1) + std_old.flatten()[0] * old_noise
+            
+            squeezed_shape = (x_new.shape[0]*self.noise_sample_size, -1)
+            _numerator = self.objective_fn(new_obj_input.reshape(*squeezed_shape))
+            _denominator = self.objective_fn(old_obj_input.reshape(*squeezed_shape))
+            
+            
             # numerator = self.objective_fn(x_new_0_pred)
             # denominator = self.objective_fn(x_old_0_pred)
 
             # to device
-            numerator = torch.tensor(numerator.numpy(), device=self.device)
-            denominator = torch.tensor(denominator.numpy(), device=self.device)
+            numerator = torch.tensor(_numerator.numpy(), device=self.device).squeeze(-1)
+            denominator = torch.tensor(_denominator.numpy(), device=self.device).squeeze(-1)
+            numerator = numerator.reshape(*expanded_shape[:-1]).mean(dim=1)
+            denominator = denominator.reshape(*expanded_shape[:-1]).mean(dim=1)
+            
             print(f"Iteration {time_step}, mean value: {numerator.mean()}")
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
