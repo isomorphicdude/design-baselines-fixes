@@ -128,8 +128,8 @@ class SMCDiffOpt(GaussianDiffusion):
             old_noise = torch.randn((x_old.shape[0], self.noise_sample_size, x_old.shape[1]), device=x_old.device)
             
             # compute objective and take mean
-            numerator = self.objective_fn(x_new_0_pred + std_new * new_noise).mean(dim=1)
-            denominator = self.objective_fn(x_old_0_pred + std_old * old_noise).mean(dim=1)
+            numerator = self.objective_fn(x_new_0_pred.repeat(1, self.noise_sample_size, 1) + std_new * new_noise).mean(dim=1)
+            denominator = self.objective_fn(x_old_0_pred.repeat(1, self.noise_sample_size, 1) + std_old * old_noise).mean(dim=1)
             # numerator = self.objective_fn(x_new_0_pred)
             # denominator = self.objective_fn(x_old_0_pred)
 
