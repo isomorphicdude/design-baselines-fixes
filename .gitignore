@@ -171,3 +171,6 @@ local_nbrun*
 # osx meta files
 .DS_Store
 outputs/
+
+*.ipynb_checkpoints
+*.ipynb

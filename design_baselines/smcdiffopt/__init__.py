@@ -130,6 +130,12 @@ logging.basicConfig(
     type=int,
     help="The number of samples to use for noise estimation.",
 )
+@click.option(
+    "--method",
+    default="smcdiffopt",
+    type=str,
+    help="The method to use for model-based optimization.",
+)
 def smcdiffopt(
     logging_dir,
     task,
@@ -144,6 +150,7 @@ def smcdiffopt(
     num_timesteps,
     retrain_model,
     noise_sample_size,
+    method,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
@@ -242,9 +249,13 @@ def smcdiffopt(
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
 
     # initialise the model
+    if method == "smcdiffopt":
+        sample_shape = (1, np.prod(task.x.shape[1:]))
+    elif method == "svdd":
+        sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
     model_config = {
         "steps": num_timesteps,
-        "shape": (1, np.prod(task.x.shape[1:])),
+        "shape": sample_shape,
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
         "model_var_type": "fixed_large",
