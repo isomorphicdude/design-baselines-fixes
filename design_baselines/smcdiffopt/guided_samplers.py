@@ -532,7 +532,6 @@ class SVDD(SMCDiffOpt):
                 y_new = None
                 y_old = None
 
-                vec_t = (torch.ones(self.shape[0]) * (reverse_ts[i - 1])).to(x_t.device)
 
                 model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
                 split_input_shape = (self.shape[0], num_particles, *self.shape[1:])
@@ -545,6 +544,8 @@ class SVDD(SMCDiffOpt):
                 )
                 print(x_t.shape)
 
+                
+                vec_t = (torch.ones(model_input_shape[0]) * (reverse_ts[i - 1])).to(x_t.device)
                 if score_output:
                     # score predicting model
                     eps_pred = (
