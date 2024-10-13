@@ -272,8 +272,9 @@ def smcdiffopt(
 
     dim_x = np.prod(task.x.shape[1:])
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
+    
     diffusion_model = create_sampler(
-        sampler="smcdiffopt", model=nn_model, **model_config
+        sampler=method, model=nn_model, **model_config
     )
     writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
