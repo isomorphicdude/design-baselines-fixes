@@ -8,12 +8,14 @@ accomodate for both SMC and DPS-like samplers.
 
 import os
 import math
+from functools import partial
 
 import torch
 import numpy as np
 
 from .diffusion import GaussianDiffusion, register_sampler
 from .diffusion_utils import extract_and_expand, get_model_fn
+
 
 
 @register_sampler("smcdiffopt")
@@ -56,14 +58,38 @@ class SMCDiffOpt(GaussianDiffusion):
         self.objective_fn = objective_fn
         self.task = sampling_task
         self.noise_sample_size = noise_sample_size
+        self.num_timesteps = int(self.betas.shape[0])
 
+    def _sigmoid(self, x, k=50, x0=0.5):
+        """
+        Sigmoid function with tunable steepness and midpoint.
+        Args:
+            x (array): values (between 0 and 1)
+            k (float): steepness of the middle part
+            x0 (float): midpoint where the sigmoid increases most rapidly
+        Returns:
+            (np.array)
+        """
+        x /= self.num_timesteps
+        return 1 / (1 + np.exp(-k * (x - x0)))
+    
+    def _custom_elu_numpy(self, t, alpha=0.5, switch_point=0.5):
+        if t <= switch_point * self.num_timesteps:
+            return 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
+        else:
+            intercept = 1 - self.sqrt_one_minus_alphas_cumprod[-(int(switch_point * self.num_timesteps) + 1)]
+            return (t / self.num_timesteps) * alpha * (1.0 - intercept) + intercept
+    
     @property
     def anneal_schedule(self):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            # return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
-            return lambda t: 1.0
+            return lambda t:  (1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)])
+            # return lambda t: 1.0
+            # schedule_func = partial(self._sigmoid, )
+            # return self._sigmoid
+            # return self._custom_elu_numpy
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
@@ -130,13 +156,17 @@ class SMCDiffOpt(GaussianDiffusion):
             old_noise = torch.randn(expanded_shape, device=x_old.device)
 
             # compute objective and take mean
+            std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
+            std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
+            # std_new = std_new.flatten()[0]
+            # std_old = std_old.flatten()[0]
             new_obj_input = (
                 x_new_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1)
-                + std_new.flatten()[0] * new_noise
+                + std_new * new_noise
             )
             old_obj_input = (
                 x_old_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1)
-                + std_old.flatten()[0] * old_noise
+                + std_old * old_noise
             )
 
             squeezed_shape = (x_new.shape[0] * self.noise_sample_size, -1)
@@ -158,7 +188,6 @@ class SMCDiffOpt(GaussianDiffusion):
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
-
         return (
             # original
             numerator * self.anneal_schedule(time_step) * beta_scaling
