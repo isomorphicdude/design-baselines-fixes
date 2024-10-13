@@ -334,10 +334,14 @@ def smcdiffopt(
     )
     diffusion_model.model.to(model_config["device"])
     diffusion_model.model.eval()
+    if method == "smcdiffopt":
+        num_particles = evaluation_samples
+    elif method == "svdd":
+        num_particles = noise_sample_size
     x = diffusion_model.sample(
         x_start=x_start,
         y_obs=None,
-        num_particles=evaluation_samples,
+        num_particles=num_particles,
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
