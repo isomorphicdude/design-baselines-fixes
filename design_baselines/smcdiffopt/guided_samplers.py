@@ -62,7 +62,8 @@ class SMCDiffOpt(GaussianDiffusion):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
+            # return lambda t: 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
+            return lambda t: 1.0
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
@@ -214,7 +215,7 @@ class SMCDiffOpt(GaussianDiffusion):
         # flattened initial x, shape (batch * num_particles, dim_x)
         # where for images dim = 3*256*256
         x_t = torch.randn(
-            self.shape[0] * num_particles, np.prod(self.shape[1:]), device=self.device
+            (self.shape[0] * num_particles, np.prod(self.shape[1:])), device=self.device
         )
 
         with torch.no_grad():
@@ -523,7 +524,7 @@ class SVDD(SMCDiffOpt):
         model_fn = get_model_fn(self.model, train=False)
 
         # initial x
-        x_t = torch.randn(self.shape[0], np.prod(self.shape[1:]), device=self.device)
+        x_t = torch.randn((self.shape[0], 1, np.prod(self.shape[1:])), device=self.device)
 
         with torch.no_grad():
             for i, num_t in enumerate(reverse_ts):
@@ -535,11 +536,10 @@ class SVDD(SMCDiffOpt):
 
                 # need to repeat x_t to get from (batch, dim_x) to (batch*num_particles, dim_x)
                 x_t = (
-                    x_t[:, None, :]
+                    x_t
                     .repeat(1, num_particles, 1)
                     .reshape(*model_input_shape)
                 )
-                print(x_t.shape)
 
                 vec_t = (torch.ones(model_input_shape[0]) * (reverse_ts[i - 1])).to(
                     x_t.device
@@ -564,10 +564,12 @@ class SVDD(SMCDiffOpt):
 
                 # get tweedie estimates
                 x_0_new = self.get_tweedie_est(num_t, x_t, eps_pred)
-
-                log_weights = beta_scaling * self.objective_fn(x_0_new)
-
-                log_weights = torch.tensor(log_weights, device=x_t.device).view(
+                
+                objective_val = self.objective_fn(x_0_new)
+                print(f"Iteration {i}, mean value: {objective_val.numpy().mean()}")
+                log_weights = beta_scaling * objective_val
+                
+                log_weights = torch.tensor(log_weights.numpy(), device=x_t.device).view(
                     self.shape[0], num_particles
                 )
 
@@ -579,22 +581,24 @@ class SVDD(SMCDiffOpt):
                 # No ESS here
                 # ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()
                 # writer.add_scalar(f"ESS_seed{seed}", ess, i)
-                resample_idx = torch.multinomial(
-                    torch.exp(log_weights), 1, replacement=True
+                # resample_idx = torch.multinomial(
+                #     torch.exp(log_weights), 1, replacement=True
+                # )
+                
+                resample_idx = torch.argmax(
+                    log_weights, dim=1, keepdim=True
                 )
-                print(resample_idx.shape)
 
                 # only sample the first particle
                 x_new = (x_new.view(*split_input_shape))[
                     torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
-                ]
-                print(x_new.shape)
-
-                x_t = x_new
+                ] # somehow this is (1, batch, 1, dim_x)
+                
+                x_t = x_new.squeeze(0)
 
                 if return_list:
                     samples.append(
-                        x_t.reshape(self.shape[0] * num_particles, *self.shape[1:])
+                        x_t.reshape(self.shape[0], *self.shape[1:])
                     )
 
         # apply inverse scaler
@@ -604,5 +608,5 @@ class SVDD(SMCDiffOpt):
             return samples, torch.exp(log_weights)
         else:
             return self.inverse_scaler(
-                x_t.view(num_particles, self.shape[0], *self.shape[1:]).squeeze()
+                x_t.view(self.shape[0], *self.shape[1:]).squeeze()
             )
