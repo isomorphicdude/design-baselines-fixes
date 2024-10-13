@@ -170,7 +170,7 @@ def smcdiffopt(
     hyperprams = dict(
         method=method,  
         beta_scaling=beta_scaling,
-        noise_schedule=smooth_schedule,
+        smooth_schedule=smooth_schedule,
         noise_sample_size=noise_sample_size,
     )
     
