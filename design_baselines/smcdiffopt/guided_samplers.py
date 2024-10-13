@@ -161,17 +161,17 @@ class SMCDiffOpt(GaussianDiffusion):
             old_noise = torch.randn(expanded_shape, device=x_old.device)
 
             # compute objective and take mean
-            if self.smooth_schedule == "flow":
-                std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
-                std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
-            elif self.smooth_schedule == "diffusion":
-                std_new = std_new.flatten()[0]
-                std_old = std_old.flatten()[0]
-            elif self.smooth_schedule == "zero":
-                std_new = 0.0
-                std_old = 0.0
-            else:
-                raise ValueError("Invalid noise schedule.")
+            # if self.smooth_schedule == "flow":
+            #     std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
+            #     std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
+            # elif self.smooth_schedule == "diffusion":
+            #     std_new = std_new.flatten()[0]
+            #     std_old = std_old.flatten()[0]
+            # elif self.smooth_schedule == "zero":
+            #     std_new = 0.0
+            #     std_old = 0.0
+            # else:
+            #     raise ValueError("Invalid noise schedule.")
             
             new_obj_input = (
                 x_new_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
@@ -394,10 +394,19 @@ class SMCDiffOpt(GaussianDiffusion):
 
         x_0 = (x_t - sqrt_1m_alpha * eps_pred) / m
 
-        coeff1 = (
-            torch.sqrt((v_prev / v) * (1 - alpha_cumprod / alpha_cumprod_prev))
-            * self.eta
-        )
+        if self.smooth_schedule == "diffusion":
+            coeff1 = (
+                torch.sqrt((v_prev / v) * (1 - alpha_cumprod / alpha_cumprod_prev))
+                * self.eta
+            )
+        elif self.smooth_schedule == "flow":    
+            coeff1 = math.sqrt(
+                (timestep / self.num_timesteps) * (1 - (timestep / self.num_timesteps)) 
+            )
+            coeff1 = torch.tensor(coeff1, device=x_t.device)
+        else:
+            raise ValueError("Invalid noise schedule.")
+        
         coeff2 = torch.sqrt(v_prev - coeff1**2)
         x_mean = m_prev * x_0 + coeff2 * eps_pred
         std = coeff1
