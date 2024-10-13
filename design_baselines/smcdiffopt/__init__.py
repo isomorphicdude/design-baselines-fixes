@@ -276,6 +276,8 @@ def smcdiffopt(
         sample_shape = (1, np.prod(task.x.shape[1:]))
     elif method == "svdd":
         sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
+        
+    # NOTE: if training from scratch, need to set num_timesteps to 1000
     model_config = {
         "steps": num_timesteps,
         "shape": sample_shape,
@@ -285,7 +287,7 @@ def smcdiffopt(
         "dynamic_threshold": False,
         "clip_denoised": False,
         "rescale_timesteps": False,
-        "timestep_respacing": num_timesteps,
+        "timestep_respacing": f"ddim{num_timesteps}",
         "device": "cuda",
         "scaler": scaler,
         "sampling_task": "optimisation",
@@ -295,6 +297,7 @@ def smcdiffopt(
     }
 
     dim_x = np.prod(task.x.shape[1:])
+    # network takes in t in [0, 1], thus needs to divide by max_t
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
     
     diffusion_model = create_sampler(

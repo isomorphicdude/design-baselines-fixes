@@ -13,47 +13,36 @@ from functools import partial
 import torch
 import numpy as np
 
-from .diffusion import GaussianDiffusion, register_sampler
+from .diffusion import GaussianDiffusion, SpacedDiffusion, register_sampler
 from .diffusion_utils import extract_and_expand, get_model_fn
 
 
 
 @register_sampler("smcdiffopt")
-class SMCDiffOpt(GaussianDiffusion):
-
+class SMCDiffOpt(SpacedDiffusion):
     def __init__(
         self,
-        model,
-        betas,
-        shape,
-        model_mean_type,
-        model_var_type,
-        dynamic_threshold,
-        clip_denoised,
-        rescale_timesteps,
-        device="cpu",
-        eta=1,
-        scaler=None,
         H_func=None,  # the inverse problem operator
         noiser=None,  # the noise model (as in DPS)
         objective_fn=None,  # the objective function
         sampling_task="inverse_problem",  # the task to be performed
         noise_sample_size=10,
         smooth_schedule=None,
+        **kwargs,
+        # model,
+        # betas,
+        # shape,
+        # model_mean_type,
+        # model_var_type,
+        # dynamic_threshold,
+        # clip_denoised,
+        # rescale_timesteps,
+        # device="cpu",
+        # eta=1,
+        # scaler=None,
+        
     ):
-        super().__init__(
-            model,
-            betas,
-            shape,
-            model_mean_type,
-            model_var_type,
-            dynamic_threshold,
-            clip_denoised,
-            rescale_timesteps,
-            device,
-            eta,
-            scaler,
-        )
+        super().__init__(**kwargs)
         self.H_func = H_func
         self.noiser = noiser
         self.objective_fn = objective_fn
@@ -61,48 +50,18 @@ class SMCDiffOpt(GaussianDiffusion):
         self.noise_sample_size = noise_sample_size
         self.num_timesteps = int(self.betas.shape[0])
         self.smooth_schedule = smooth_schedule
-
-    def _sigmoid(self, x, k=50, x0=0.5):
-        """
-        Sigmoid function with tunable steepness and midpoint.
-        Args:
-            x (array): values (between 0 and 1)
-            k (float): steepness of the middle part
-            x0 (float): midpoint where the sigmoid increases most rapidly
-        Returns:
-            (np.array)
-        """
-        x /= self.num_timesteps
-        return 1 / (1 + np.exp(-k * (x - x0)))
-    
-    def _custom_elu_numpy(self, t, alpha=0.5, switch_point=0.5):
-        if t <= switch_point * self.num_timesteps:
-            return 1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)]
-        else:
-            intercept = 1 - self.sqrt_one_minus_alphas_cumprod[-(int(switch_point * self.num_timesteps) + 1)]
-            return (t / self.num_timesteps) * alpha * (1.0 - intercept) + intercept
-    
+       
     @property
     def anneal_schedule(self):
         if self.task == "inverse_problem":
             return lambda t: 1.0
         elif self.task == "optimisation":
-            return lambda t:  (1 - self.sqrt_one_minus_alphas_cumprod[-(t + 1)])
-            # return lambda t: 1.0
-            # schedule_func = partial(self._sigmoid, )
-            # return self._sigmoid
-            # return self._custom_elu_numpy
+            # assume t starts from last time step (e.g. 999) and goes to 0
+            return lambda t:  (1 - self.sqrt_one_minus_alphas_cumprod[(t + 1)])
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
-        if method == "default":
-            return self._proposal_X_t(num_t, x_t, eps_pred)
-        elif method == "conditional":
-            c_t = self.sqrt_alphas_cumprod[-(num_t + 1)]
-            d_t = self.sqrt_1m_alphas_cumprod[-(num_t + 1)]
-            return self._proposal_X_t_y(num_t, x_t, eps_pred, kwargs["y_t"], c_t, d_t)
-        else:
-            raise ValueError("Invalid proposal method.")
+        return self._proposal_X_t(num_t, x_t, eps_pred)
 
     def get_log_potential(
         self,
@@ -142,36 +101,26 @@ class SMCDiffOpt(GaussianDiffusion):
 
         elif self.task == "optimisation":
             # use x_mean at each time step
-            _, x_new_mean, std_new, x_new_0 = self._proposal_X_t(
-                time_step, x_new, eps_pred_new, return_std=True
-            )
+            # _, x_new_mean, std_new, x_new_0 = self._proposal_X_t(
+            #     time_step, x_new, eps_pred_new, return_std=True
+            # )
 
-            _, x_old_mean, std_old, x_old_0 = self._proposal_X_t(
-                time_step - 1, x_old, eps_pred_old, return_std=True
-            )
-            # x_new_0_pred = x_new
-            # x_old_0_pred = x_old
+            # _, x_old_mean, std_old, x_old_0 = self._proposal_X_t(
+            #     time_step - 1, x_old, eps_pred_old, return_std=True
+            # )
+            x_new_0_pred = x_new
+            x_old_0_pred = x_old
             
-            # x_new_mean = x_new_0
-            # x_old_mean = x_old_0
+            x_new_mean = x_new
+            x_old_mean = x_old
+            
+            std_new = 0
+            std_old = 0
 
             # sample new random vectors
             expanded_shape = (x_new.shape[0], self.noise_sample_size, x_new.shape[1])
             new_noise = torch.randn(expanded_shape, device=x_new.device)
             old_noise = torch.randn(expanded_shape, device=x_old.device)
-
-            # compute objective and take mean
-            # if self.smooth_schedule == "flow":
-            #     std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
-            #     std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
-            # elif self.smooth_schedule == "diffusion":
-            #     std_new = std_new.flatten()[0]
-            #     std_old = std_old.flatten()[0]
-            # elif self.smooth_schedule == "zero":
-            #     std_new = 0.0
-            #     std_old = 0.0
-            # else:
-            #     raise ValueError("Invalid noise schedule.")
             
             new_obj_input = (
                 x_new_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
@@ -186,9 +135,6 @@ class SMCDiffOpt(GaussianDiffusion):
             _numerator = self.objective_fn(new_obj_input.reshape(*squeezed_shape))
             _denominator = self.objective_fn(old_obj_input.reshape(*squeezed_shape))
 
-            # numerator = self.objective_fn(x_new_0_pred)
-            # denominator = self.objective_fn(x_old_0_pred)
-
             # to device
             numerator = torch.tensor(_numerator.numpy(), device=self.device).squeeze(-1)
             denominator = torch.tensor(
@@ -201,7 +147,6 @@ class SMCDiffOpt(GaussianDiffusion):
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
-        print(self.anneal_schedule(time_step))
         return (
             # original
             numerator * self.anneal_schedule(time_step) * beta_scaling
@@ -248,10 +193,8 @@ class SMCDiffOpt(GaussianDiffusion):
         seed = kwargs.get("seed", None)
         assert seed is not None, "Seed must be provided."
 
-        ts = list(range(self.num_timesteps))[::-1]
+        ts = list(range(self.num_timesteps))
         reverse_ts = ts[::-1]
-
-        d_t_func = lambda t: self.sqrt_1m_alphas_cumprod[-(t + 1)]
 
         model_fn = get_model_fn(self.model, train=False)
 
@@ -275,20 +218,12 @@ class SMCDiffOpt(GaussianDiffusion):
 
                 model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
 
-                if score_output:
-                    # score predicting model
-                    eps_pred = (
-                        model_fn(x_t.view(*model_input_shape), vec_t)
-                        * (-1)
-                        * d_t_func(i)
-                    )  # (batch * num_particles, 3, 256, 256)
-                else:
-                    # noise predicting model
-                    eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
-                    if eps_pred.shape[1] == 2 * self.shape[1]:
-                        eps_pred, model_var_values = torch.split(
-                            eps_pred, self.shape[1], dim=1
-                        )
+                # noise predicting model
+                eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
+                if eps_pred.shape[1] == 2 * self.shape[1]:
+                    eps_pred, model_var_values = torch.split(
+                        eps_pred, self.shape[1], dim=1
+                    )
 
                 x_new, x_mean_new = self.get_proposal_X_t(
                     num_t,
@@ -307,7 +242,7 @@ class SMCDiffOpt(GaussianDiffusion):
                     x_t.view(*x_input_shape),
                     y_new,
                     y_old,
-                    i,
+                    num_t,
                     beta_scaling=beta_scaling,
                     eps_pred_new=eps_pred_new,
                     eps_pred_old=eps_pred,
@@ -365,7 +300,7 @@ class SMCDiffOpt(GaussianDiffusion):
         """
         Sample x_{t-1} from x_{t} in the diffusion model as a naive proposal.
         Args:
-            timestep (int): time step
+            timestep (int): time step, from 999 to 0
             x_t (torch.Tensor): x_t
             eps_pred (torch.Tensor): epsilon_t
 
@@ -568,11 +503,9 @@ class SVDD(SMCDiffOpt):
         seed = kwargs.get("seed", None)
         assert seed is not None, "Seed must be provided."
 
-        ts = list(range(self.num_timesteps))[::-1]
+        ts = list(range(self.num_timesteps))
         reverse_ts = ts[::-1]
-
-        d_t_func = lambda t: self.sqrt_1m_alphas_cumprod[-(t + 1)]
-
+        
         model_fn = get_model_fn(self.model, train=False)
 
         # initial x
@@ -596,16 +529,9 @@ class SVDD(SMCDiffOpt):
                 vec_t = (torch.ones(model_input_shape[0]) * (reverse_ts[i - 1])).to(
                     x_t.device
                 )
-                if score_output:
-                    # score predicting model
-                    eps_pred = (
-                        model_fn(x_t.view(*model_input_shape), vec_t)
-                        * (-1)
-                        * d_t_func(i)
-                    )  # (batch * num_particles, 3, 256, 256)
-                else:
-                    # noise predicting model
-                    eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
+                
+                # noise predicting model
+                eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
 
                 x_new, x_mean_new = self.get_proposal_X_t(
                     num_t,
