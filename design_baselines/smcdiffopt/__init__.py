@@ -113,19 +113,19 @@ logging.basicConfig(
     help="The seed to use for the experiment.",
 )
 @click.option(
-    "--num_timesteps",
+    "--num-timesteps",
     default=1000,
     type=int,
     help="The number of timesteps to use in the diffusion model.",
 )
 @click.option(
-    "--retrain_model",
+    "--retrain-model",
     default=False,
     type=bool,
     help="Whether to retrain the model from scratch.",
 )
 @click.option(
-    "--noise_sample_size",
+    "--noise-sample-size",
     default=10,
     type=int,
     help="The number of samples to use for noise estimation.",
@@ -135,6 +135,12 @@ logging.basicConfig(
     default="smcdiffopt",
     type=str,
     help="The method to use for model-based optimization.",
+)
+@click.option(
+    "--noise-schedule",
+    default="diffusion",
+    type=str,
+    help="The schedule to use for Gaussian smoothing.",
 )
 def smcdiffopt(
     logging_dir,
@@ -151,11 +157,25 @@ def smcdiffopt(
     retrain_model,
     noise_sample_size,
     method,
+    noise_schedule,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
+    
+    # add parameters to logging dir
+    # logging_dir = f"{method}_{seed}_{beta_scaling}_{noise_schedule}_{noise_sample_size}_{"
+    
+    hyperprams = dict(
+        seed=seed,
+        beta_scaling=beta_scaling,
+        noise_schedule=noise_schedule,
+        noise_sample_size=noise_sample_size,
+    )
+    
+    logging_dir = os.path.join(logging_dir, "_".join([f"{v}" for k, v in hyperprams.items()]))
+    
     params = dict(
         logging_dir=logging_dir,
         task=task,
@@ -165,10 +185,13 @@ def smcdiffopt(
         normalize_ys=normalize_ys,
         normalize_xs=normalize_xs,
     )
-
+    
     logger = Logger(logging_dir)
     with open(os.path.join(logging_dir, "params.json"), "w") as f:
         json.dump(params, f)
+        
+    with open(os.path.join(logging_dir, "hyperparams.json"), "w") as f:
+        json.dump(hyperprams, f)
 
     # create task
     task_name = task  # for model loading

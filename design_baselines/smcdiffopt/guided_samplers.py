@@ -140,15 +140,18 @@ class SMCDiffOpt(GaussianDiffusion):
 
         elif self.task == "optimisation":
             # use x_mean at each time step
-            _, x_new_0_pred, std_new, _ = self._proposal_X_t(
+            _, x_new_mean, std_new, x_new_0 = self._proposal_X_t(
                 time_step, x_new, eps_pred_new, return_std=True
             )
 
-            _, x_old_0_pred, std_old, _ = self._proposal_X_t(
+            _, x_old_mean, std_old, x_old_0 = self._proposal_X_t(
                 time_step - 1, x_old, eps_pred_old, return_std=True
             )
             # x_new_0_pred = x_new
             # x_old_0_pred = x_old
+            
+            # x_new_mean = x_new_0
+            # x_old_mean = x_old_0
 
             # sample new random vectors
             expanded_shape = (x_new.shape[0], self.noise_sample_size, x_new.shape[1])
@@ -160,12 +163,14 @@ class SMCDiffOpt(GaussianDiffusion):
             std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
             # std_new = std_new.flatten()[0]
             # std_old = std_old.flatten()[0]
+            # std_new = 0.0
+            # std_old = 0.0
             new_obj_input = (
-                x_new_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1)
+                x_new_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
                 + std_new * new_noise
             )
             old_obj_input = (
-                x_old_0_pred[:, None, :].repeat(1, self.noise_sample_size, 1)
+                x_old_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
                 + std_old * old_noise
             )
 
@@ -188,6 +193,7 @@ class SMCDiffOpt(GaussianDiffusion):
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
+        print(self.anneal_schedule(time_step))
         return (
             # original
             numerator * self.anneal_schedule(time_step) * beta_scaling
