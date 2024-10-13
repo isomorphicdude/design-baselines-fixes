@@ -137,7 +137,7 @@ logging.basicConfig(
     help="The method to use for model-based optimization.",
 )
 @click.option(
-    "--noise-schedule",
+    "--smooth-schedule",
     default="diffusion",
     type=str,
     help="The schedule to use for Gaussian smoothing.",
@@ -157,7 +157,7 @@ def smcdiffopt(
     retrain_model,
     noise_sample_size,
     method,
-    noise_schedule,
+    smooth_schedule,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
@@ -170,7 +170,7 @@ def smcdiffopt(
     hyperprams = dict(
         method=method,  
         beta_scaling=beta_scaling,
-        noise_schedule=noise_schedule,
+        noise_schedule=smooth_schedule,
         noise_sample_size=noise_sample_size,
     )
     
@@ -291,7 +291,7 @@ def smcdiffopt(
         "sampling_task": "optimisation",
         "objective_fn": objective_fn,
         "noise_sample_size": noise_sample_size,
-        "noise_schedule": noise_schedule,
+        "smooth_schedule": smooth_schedule,
     }
 
     dim_x = np.prod(task.x.shape[1:])
