@@ -49,7 +49,7 @@ def create_sampler(
     dynamic_threshold,
     clip_denoised,
     rescale_timesteps,
-    timestep_respacing="",
+    timestep_respacing="ddim100",
     device="cpu",
     **kwargs,
 ):
@@ -60,8 +60,8 @@ def create_sampler(
     if not timestep_respacing:
         timestep_respacing = [steps]
 
-    return sampler(
-        model,
+    base_model_kwargs = dict(
+        model=model,
         betas=betas,
         shape=shape,
         model_mean_type=model_mean_type,
@@ -69,15 +69,19 @@ def create_sampler(
         dynamic_threshold=dynamic_threshold,
         clip_denoised=clip_denoised,
         rescale_timesteps=rescale_timesteps,
-        # use_timesteps=space_timesteps(steps, timestep_respacing),
+        use_timesteps=space_timesteps(steps, timestep_respacing),
         device=device,
-        **kwargs,
     )
+    merged_kwargs = {**base_model_kwargs, **kwargs}
+    
+    return sampler(**merged_kwargs)
 
 
-#TODO: Extend this class to be a base class for all discrete-time diffusion models.
+
+# TODO: Extend this class to be a base class for all discrete-time diffusion models.
 class GaussianDiffusion(ABC):
     """"""
+
     def __init__(
         self,
         model,
@@ -90,7 +94,7 @@ class GaussianDiffusion(ABC):
         rescale_timesteps,
         device="cpu",
         eta=1.0,  # for DDIM
-        scaler=None, # sklearn object #TODO: implement for images
+        scaler=None,  # sklearn object #TODO: implement for images
     ):
         self.model = model
         self.device = device
@@ -105,7 +109,7 @@ class GaussianDiffusion(ABC):
             self.betas <= 1
         ).all(), "betas must be in (0..1]"
 
-        self.num_timesteps = int(self.betas.shape[0]) # 1000 
+        self.num_timesteps = int(self.betas.shape[0])  # 1000
         self.rescale_timesteps = rescale_timesteps
 
         alphas = 1.0 - self.betas
@@ -118,7 +122,9 @@ class GaussianDiffusion(ABC):
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod_prev = np.sqrt(1.0 - self.alphas_cumprod_prev)
+        self.sqrt_one_minus_alphas_cumprod_prev = np.sqrt(
+            1.0 - self.alphas_cumprod_prev
+        )
         self.log_one_minus_alphas_cumprod = np.log(1.0 - self.alphas_cumprod)
         self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
         self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
@@ -177,7 +183,7 @@ class GaussianDiffusion(ABC):
         Args:
             x_0 (torch.Tensor): the [N x C x ...] tensor of noiseless inputs.
             t (int): the integer timestep.
-            
+
         Returns:
             tuple (x_t, noise), both of x_0's shape.
         """
@@ -188,7 +194,6 @@ class GaussianDiffusion(ABC):
         coef2 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, x_0)
 
         return coef1 * x_0 + coef2 * noise, noise
-
 
     def posterior_mean_var(self, x_0, x_t, t):
         """
@@ -216,46 +221,57 @@ class GaussianDiffusion(ABC):
         Computes the mean and variance of the variational Markov chain p_theta(x_{t-1} | x_t).
         """
         model_output = self.model(x_t, self._scale_timesteps(t))
-    
+
         # In the case of "learned" variance, model will give twice channels.
         if model_output.shape[1] == 2 * x_t.shape[1]:
-            model_output, model_var_values = torch.split(model_output, x_t.shape[1], dim=1)
+            model_output, model_var_values = torch.split(
+                model_output, x_t.shape[1], dim=1
+            )
         else:
-            # The name of variable is wrong. 
-            # This will just provide shape information, and 
+            # The name of variable is wrong.
+            # This will just provide shape information, and
             # will not be used for calculating something important in variance.
             model_var_values = model_output
-        
-        model_mean, pred_xstart = self.mean_processor.get_mean_and_xstart(x_t, t, model_output)
-        model_variance, model_log_variance = self.var_processor.get_variance(model_var_values, t)
 
-        assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x_t.shape
+        model_mean, pred_xstart = self.mean_processor.get_mean_and_xstart(
+            x_t, t, model_output
+        )
+        model_variance, model_log_variance = self.var_processor.get_variance(
+            model_var_values, t
+        )
 
-        return {'mean': model_mean,
-                'variance': model_variance,
-                'log_variance': model_log_variance,
-                'pred_xstart': pred_xstart}
-    @abstractmethod
-    def sample(self,
-                    model,
-                    x_start):
+        assert (
+            model_mean.shape
+            == model_log_variance.shape
+            == pred_xstart.shape
+            == x_t.shape
+        )
+
+        return {
+            "mean": model_mean,
+            "variance": model_variance,
+            "log_variance": model_log_variance,
+            "pred_xstart": pred_xstart,
+        }
+
+    # @abstractmethod
+    def sample(self, model, x_start):
         """
         The function used for sampling from noise.
-        """ 
+        """
         pass
-    
-    @abstractmethod
+
+    # @abstractmethod
     def p_sample(self, x, t, model):
         """
         The function used for sampling from noise.
-        """ 
+        """
         pass
-    
-    
+
     def train_loss_fn(self, data, t):
         """
         Computes the training loss.
-        
+
         Args:
             data (torch.Tensor): The data batch.
             t (int): integer timestep.
@@ -263,15 +279,15 @@ class GaussianDiffusion(ABC):
             torch.Tensor: The training loss.
         """
         diffused, noise = self.forward_sample(data, t)
-        eps_pred = self.model(diffused, self._scale_timesteps(t))   
+        eps_pred = self.model(diffused, self._scale_timesteps(t))
         loss = torch.mean((eps_pred - noise) ** 2)
         return loss
-    
+
     def _scale_timesteps(self, t):
         if self.rescale_timesteps:
             return t.float() * (1000.0 / self.num_timesteps)
         return t.float()
-    
+
     def inverse_scaler(self, x):
         if self.scaler is not None:
             if isinstance(self.scaler, StandardScaler):
@@ -283,33 +299,90 @@ class GaussianDiffusion(ABC):
                 return self.scaler.inverse_transform(x)
         else:
             return x
-    
-    
+
+
+class SpacedDiffusion(GaussianDiffusion):
+    """
+    A diffusion process which can skip steps in a base diffusion process.
+    :param use_timesteps: a collection (sequence or set) of timesteps from the
+                          original diffusion process to retain.
+    :param kwargs: the kwargs to create the base diffusion process.
+    """
+
+    def __init__(self, use_timesteps, **kwargs):
+        self.use_timesteps = set(use_timesteps)
+        self.timestep_map = []
+        self.original_num_steps = len(kwargs["betas"])
+
+        base_diffusion = GaussianDiffusion(**kwargs)
+        last_alpha_cumprod = 1.0
+        new_betas = []
+        for i, alpha_cumprod in enumerate(base_diffusion.alphas_cumprod):
+            if i in self.use_timesteps:
+                new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
+                last_alpha_cumprod = alpha_cumprod
+                self.timestep_map.append(i)
+        kwargs["betas"] = np.array(new_betas)
+        super().__init__(**kwargs)
+
+    def p_sample(self, x, t, model):
+        raise NotImplementedError
+
+    def sample(self, model, x_start):
+        raise NotImplementedError
+
+    def _wrap_model(self, model):
+        if isinstance(model, _WrappedModel):
+            return model
+        return _WrappedModel(
+            model, self.timestep_map, self.rescale_timesteps, self.original_num_steps
+        )
+
+    def _scale_timesteps(self, t):
+        # Scaling is done by the wrapped model.
+        return t
+
+
+class _WrappedModel:
+    def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
+        self.model = model
+        self.timestep_map = timestep_map
+        self.rescale_timesteps = rescale_timesteps
+        self.original_num_steps = original_num_steps
+
+    def __call__(self, x, ts, **kwargs):
+        map_tensor = torch.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
+        new_ts = map_tensor[ts]
+        if self.rescale_timesteps:
+            new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
+        return self.model(x, new_ts, **kwargs)
+
+
 @register_sampler("ddpm")
-class DDPM(GaussianDiffusion):
+class DDPM(SpacedDiffusion):
     def sample(self, x_start):
         """
         The function used for sampling from noise.
-        """ 
+        """
         x = x_start
         device = x_start.device
-        with torch.no_grad():    
+        with torch.no_grad():
             int_timesteps = list(range(self.num_timesteps))[::-1]
             for idx in int_timesteps:
                 time = torch.tensor([idx], device=device)
                 out = self.p_sample(x=x, t=time)
-                x = out['sample']
+                x = out["sample"]
         return self.inverse_scaler(x)
-    
+
     def p_sample(self, x, t):
         """
         The function used for sampling from noise.
-        """ 
+        """
         out = self.backward_one_step(x, t)
-        sample = out['mean']
+        sample = out["mean"]
 
         noise = torch.randn_like(x)
         if t != 0:  # no noise when t == 0
-            sample += torch.exp(0.5 * out['log_variance']) * noise
+            sample += torch.exp(0.5 * out["log_variance"]) * noise
 
-        return {'sample': sample, 'pred_xstart': out['pred_xstart']}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"]}

@@ -113,10 +113,34 @@ logging.basicConfig(
     help="The seed to use for the experiment.",
 )
 @click.option(
-    "--num_timesteps",
+    "--num-timesteps",
     default=1000,
     type=int,
     help="The number of timesteps to use in the diffusion model.",
+)
+@click.option(
+    "--retrain-model",
+    default=False,
+    type=bool,
+    help="Whether to retrain the model from scratch.",
+)
+@click.option(
+    "--noise-sample-size",
+    default=10,
+    type=int,
+    help="The number of samples to use for noise estimation.",
+)
+@click.option(
+    "--method",
+    default="smcdiffopt",
+    type=str,
+    help="The method to use for model-based optimization.",
+)
+@click.option(
+    "--smooth-schedule",
+    default="diffusion",
+    type=str,
+    help="The schedule to use for Gaussian smoothing.",
 )
 def smcdiffopt(
     logging_dir,
@@ -130,11 +154,28 @@ def smcdiffopt(
     beta_scaling,
     seed,
     num_timesteps,
+    retrain_model,
+    noise_sample_size,
+    method,
+    smooth_schedule,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
+    
+    # add parameters to logging dir
+    # logging_dir = f"{method}_{seed}_{beta_scaling}_{noise_schedule}_{noise_sample_size}_{"
+    
+    hyperprams = dict(
+        method=method,  
+        beta_scaling=beta_scaling,
+        smooth_schedule=smooth_schedule,
+        noise_sample_size=noise_sample_size,
+    )
+    
+    logging_dir = os.path.join(logging_dir, "_".join([f"{v}" for k, v in hyperprams.items()]))
+    
     params = dict(
         logging_dir=logging_dir,
         task=task,
@@ -144,10 +185,13 @@ def smcdiffopt(
         normalize_ys=normalize_ys,
         normalize_xs=normalize_xs,
     )
-
+    
     logger = Logger(logging_dir)
     with open(os.path.join(logging_dir, "params.json"), "w") as f:
         json.dump(params, f)
+        
+    with open(os.path.join(logging_dir, "hyperparams.json"), "w") as f:
+        json.dump(hyperprams, f)
 
     # create task
     task_name = task  # for model loading
@@ -228,69 +272,87 @@ def smcdiffopt(
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
 
     # initialise the model
+    if method == "smcdiffopt":
+        sample_shape = (1, np.prod(task.x.shape[1:]))
+    elif method == "svdd":
+        sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
+        
+    # NOTE: if training from scratch, need to set num_timesteps to 1000
     model_config = {
         "steps": num_timesteps,
-        "shape": (1, np.prod(task.x.shape[1:])),
+        "shape": sample_shape,
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
         "model_var_type": "fixed_large",
         "dynamic_threshold": False,
         "clip_denoised": False,
         "rescale_timesteps": False,
-        "timestep_respacing": num_timesteps,
+        "timestep_respacing": f"ddim{num_timesteps}",
         "device": "cuda",
         "scaler": scaler,
         "sampling_task": "optimisation",
         "objective_fn": objective_fn,
+        "noise_sample_size": noise_sample_size,
+        "smooth_schedule": smooth_schedule,
     }
 
     dim_x = np.prod(task.x.shape[1:])
+    # network takes in t in [0, 1], thus needs to divide by max_t
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
+    
     diffusion_model = create_sampler(
-        sampler="smcdiffopt", model=nn_model, **model_config
+        sampler=method, model=nn_model, **model_config
     )
     writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
     # try load weights of pre-trained diffusion model from logging directory
-    try:
-        logging.info("Loading pre-trained weights.")
-        repo_id = "isomorphicdude/SMCDiffOpt"
-        file_name = f"{task_name}.pt"
-        download_path = hf_hub_download(repo_id, file_name)
-        nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
-    except:
-        # load from local weights
-        ckpt_dir = os.path.join(logging_dir, task_name)
+    ckpt_dir = os.path.join(logging_dir, task_name)
+    def retrain():
+        os.makedirs(ckpt_dir, exist_ok=True)
+        losses = train_model(
+            diffusion_model=diffusion_model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=torch.optim.Adam(
+                nn_model.parameters(), lr=training_config["learning_rate"]
+            ),
+            num_epochs=training_config["num_epochs"],
+            writer=writer,
+            device=model_config["device"],
+            ckpt_dir=ckpt_dir,
+        )
+        nn_model.load_state_dict(
+            torch.load(
+                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                map_location="cpu",
+            )
+        )
+        return losses
+    if not retrain_model:
         try:
-            logging.info("Loading pre-trained weights from local...")
-            nn_model.load_state_dict(
-                torch.load(
-                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
-                    map_location="cpu",
-                )
-            )
+            logging.info("Loading pre-trained weights.")
+            repo_id = "isomorphicdude/SMCDiffOpt"
+            file_name = f"{task_name}.pt"
+            download_path = hf_hub_download(repo_id, file_name)
+            nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
         except:
-            logging.info("No pre-trained weights found, training model from scratch.")
-            os.makedirs(ckpt_dir, exist_ok=True)
-
-            losses = train_model(
-                diffusion_model=diffusion_model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                optimizer=torch.optim.Adam(
-                    nn_model.parameters(), lr=training_config["learning_rate"]
-                ),
-                num_epochs=training_config["num_epochs"],
-                writer=writer,
-                device=model_config["device"],
-                ckpt_dir=ckpt_dir,
-            )
-            nn_model.load_state_dict(
-                torch.load(
-                    os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
-                    map_location="cpu",
+            # load from local weights
+            try:
+                logging.info("Loading pre-trained weights from local...")
+                nn_model.load_state_dict(
+                    torch.load(
+                        os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                        map_location="cpu",
+                    )
                 )
-            )
+            except:
+                logging.info("No pre-trained weights found, training model from scratch.")
+                retrain()
+    else:
+        retrain()
+            
+    
+            
 
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
@@ -299,14 +361,19 @@ def smcdiffopt(
     )
     diffusion_model.model.to(model_config["device"])
     diffusion_model.model.eval()
+    if method == "smcdiffopt":
+        num_particles = evaluation_samples
+    elif method == "svdd":
+        num_particles = noise_sample_size
     x = diffusion_model.sample(
         x_start=x_start,
         y_obs=None,
-        num_particles=evaluation_samples,
+        num_particles=num_particles,
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
         writer=writer,
+        seed=seed
     )
 
     # evaluate and save the results
