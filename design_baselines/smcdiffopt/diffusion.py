@@ -254,14 +254,14 @@ class GaussianDiffusion(ABC):
             "pred_xstart": pred_xstart,
         }
 
-    @abstractmethod
+    # @abstractmethod
     def sample(self, model, x_start):
         """
         The function used for sampling from noise.
         """
         pass
 
-    @abstractmethod
+    # @abstractmethod
     def p_sample(self, x, t, model):
         """
         The function used for sampling from noise.
@@ -326,10 +326,10 @@ class SpacedDiffusion(GaussianDiffusion):
         super().__init__(**kwargs)
 
     def p_sample(self, x, t, model):
-        return super().p_sample(x, t, model)
+        raise NotImplementedError
 
     def sample(self, model, x_start):
-        return super().sample(model, x_start)
+        raise NotImplementedError
 
     def _wrap_model(self, model):
         if isinstance(model, _WrappedModel):

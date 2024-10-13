@@ -57,7 +57,7 @@ class SMCDiffOpt(SpacedDiffusion):
             return lambda t: 1.0
         elif self.task == "optimisation":
             # assume t starts from last time step (e.g. 999) and goes to 0
-            return lambda t:  (1 - self.sqrt_one_minus_alphas_cumprod[(t + 1)])
+            return lambda t:  (1 - self.sqrt_one_minus_alphas_cumprod[(t)])
 
     # TODO: this is direct import from flows, should clean up
     def get_proposal_X_t(self, num_t, x_t, eps_pred, method="default", **kwargs):
@@ -533,18 +533,19 @@ class SVDD(SMCDiffOpt):
                 # noise predicting model
                 eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
 
-                x_new, x_mean_new = self.get_proposal_X_t(
+                x_new, x_mean_new, std, x0 = self._proposal_X_t(
                     num_t,
                     x_t.view(*model_input_shape),
                     eps_pred,
-                    method=sampling_method,
+                    return_std=True
                 )  # (batch * num_particles, 3, 256, 256)
-
+                # print(f"Time: {num_t}, std: {std}")
                 # get tweedie estimates
                 x_0_new = self.get_tweedie_est(num_t, x_t, eps_pred)
                 
-                objective_val = self.objective_fn(x_0_new)
-                print(f"Iteration {i}, mean value: {objective_val.numpy().mean()}")
+                objective_val = self.objective_fn(x_new)
+                
+                print(f"Iteration {num_t}, mean value: {objective_val.numpy().mean()}")
                 log_weights = beta_scaling * objective_val
                 
                 log_weights = torch.tensor(log_weights.numpy(), device=x_t.device).view(
@@ -559,13 +560,13 @@ class SVDD(SMCDiffOpt):
                 # No ESS here
                 # ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()
                 # writer.add_scalar(f"ESS_seed{seed}", ess, i)
-                # resample_idx = torch.multinomial(
-                #     torch.exp(log_weights), 1, replacement=True
-                # )
-                
-                resample_idx = torch.argmax(
-                    log_weights, dim=1, keepdim=True
+                resample_idx = torch.multinomial(
+                    torch.exp(log_weights), 1, replacement=True
                 )
+                
+                # resample_idx = torch.argmax(
+                #     log_weights, dim=1, keepdim=True
+                # )
 
                 # only sample the first particle
                 x_new = (x_new.view(*split_input_shape))[
