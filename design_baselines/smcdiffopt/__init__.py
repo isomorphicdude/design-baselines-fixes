@@ -291,6 +291,7 @@ def smcdiffopt(
         "sampling_task": "optimisation",
         "objective_fn": objective_fn,
         "noise_sample_size": noise_sample_size,
+        "noise_schedule": noise_schedule,
     }
 
     dim_x = np.prod(task.x.shape[1:])

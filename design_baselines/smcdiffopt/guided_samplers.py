@@ -39,6 +39,7 @@ class SMCDiffOpt(GaussianDiffusion):
         objective_fn=None,  # the objective function
         sampling_task="inverse_problem",  # the task to be performed
         noise_sample_size=10,
+        noise_schedule=None,
     ):
         super().__init__(
             model,
@@ -59,6 +60,7 @@ class SMCDiffOpt(GaussianDiffusion):
         self.task = sampling_task
         self.noise_sample_size = noise_sample_size
         self.num_timesteps = int(self.betas.shape[0])
+        self.noise_schedule = noise_schedule
 
     def _sigmoid(self, x, k=50, x0=0.5):
         """
@@ -159,12 +161,18 @@ class SMCDiffOpt(GaussianDiffusion):
             old_noise = torch.randn(expanded_shape, device=x_old.device)
 
             # compute objective and take mean
-            std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
-            std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
-            # std_new = std_new.flatten()[0]
-            # std_old = std_old.flatten()[0]
-            # std_new = 0.0
-            # std_old = 0.0
+            if self.noise_schedule == "flow":
+                std_new = (time_step / self.num_timesteps) * (1 - (time_step / self.num_timesteps)) 
+                std_old = ((time_step + 1) / self.num_timesteps) * (1 - ((time_step + 1) / self.num_timesteps))
+            elif self.noise_schedule == "diffusion":
+                std_new = std_new.flatten()[0]
+                std_old = std_old.flatten()[0]
+            elif self.noise_schedule == "zero":
+                std_new = 0.0
+                std_old = 0.0
+            else:
+                raise ValueError("Invalid noise schedule.")
+            
             new_obj_input = (
                 x_new_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
                 + std_new * new_noise
