@@ -523,15 +523,12 @@ class SVDD(SMCDiffOpt):
         model_fn = get_model_fn(self.model, train=False)
 
         # initial x
-        x_t = torch.randn(
-            self.shape[0], np.prod(self.shape[1:]), device=self.device
-        )
+        x_t = torch.randn(self.shape[0], np.prod(self.shape[1:]), device=self.device)
 
         with torch.no_grad():
             for i, num_t in enumerate(reverse_ts):
                 y_new = None
                 y_old = None
-
 
                 model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
                 split_input_shape = (self.shape[0], num_particles, *self.shape[1:])
@@ -544,8 +541,9 @@ class SVDD(SMCDiffOpt):
                 )
                 print(x_t.shape)
 
-                
-                vec_t = (torch.ones(model_input_shape[0]) * (reverse_ts[i - 1])).to(x_t.device)
+                vec_t = (torch.ones(model_input_shape[0]) * (reverse_ts[i - 1])).to(
+                    x_t.device
+                )
                 if score_output:
                     # score predicting model
                     eps_pred = (
@@ -567,7 +565,9 @@ class SVDD(SMCDiffOpt):
                 # get tweedie estimates
                 x_0_new = self.get_tweedie_est(num_t, x_t, eps_pred)
 
-                log_weights = (beta_scaling * self.objective_fn(x_0_new)).view(
+                log_weights = beta_scaling * self.objective_fn(x_0_new)
+
+                log_weights = torch.tensor(log_weights, device=x_t.device).view(
                     self.shape[0], num_particles
                 )
 
@@ -583,7 +583,7 @@ class SVDD(SMCDiffOpt):
                     torch.exp(log_weights), 1, replacement=True
                 )
                 print(resample_idx.shape)
-                
+
                 # only sample the first particle
                 x_new = (x_new.view(*split_input_shape))[
                     torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
