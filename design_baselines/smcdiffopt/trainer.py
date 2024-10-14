@@ -30,9 +30,10 @@ def train_model(
     writer: SummaryWriter,
     device: str = "cpu",
     ckpt_dir: str = "smcdiffopt",
-    print_every: int = 100,
+    print_every: int = 10,
+    save_every: int = 100,
     num_time_steps: int = 1000,
-    verbose: bool = False,
+    verbose: bool = True,
 ):
     # load latest checkpoint
     if os.path.exists(ckpt_dir) and os.listdir(ckpt_dir):
@@ -60,7 +61,7 @@ def train_model(
     
     global_step = 0
     for epoch in range(start_epoch, num_epochs):
-        if verbose:
+        if verbose and epoch % print_every == 0:
             progress_bar = tqdm(total=len(train_loader))
             progress_bar.set_description(f"Epoch {epoch}")
         diffusion_model.network.train()   
@@ -77,16 +78,16 @@ def train_model(
 
             loss_logs = {"loss": loss.detach().item(), "step": global_step}
             losses.append(loss.detach().item())
-            if verbose:
+            if verbose and epoch % print_every == 0:
                 progress_bar.update(1)
                 progress_bar.set_postfix(**loss_logs)
             global_step += 1
             
             writer.add_scalar("Loss/train", loss.detach().item(), epoch)
+        if verbose and epoch % print_every == 0:
+            progress_bar.close()
         
-        progress_bar.close()
-        
-        if epoch % print_every == 0 or epoch == num_epochs - 1:
+        if epoch % save_every == 0 or epoch == num_epochs - 1:
             # logging.info(f"Epoch {epoch} - Loss: {loss.item()}")
             checkpoint = {
             'epoch': epoch,
