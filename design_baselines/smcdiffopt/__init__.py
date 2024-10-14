@@ -343,7 +343,7 @@ def smcdiffopt(
                     torch.load(
                         os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
                         map_location="cpu",
-                    )
+                    )['model_state_dict']
                 )
             except:
                 logging.info("No pre-trained weights found, training model from scratch.")
@@ -351,16 +351,13 @@ def smcdiffopt(
     else:
         retrain()
             
-    
-            
-
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
     x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
         model_config["device"]
     )
-    diffusion_model.model.to(model_config["device"])
-    diffusion_model.model.eval()
+    diffusion_model.network.to(model_config["device"])
+    diffusion_model.network.eval()
     if method == "smcdiffopt":
         num_particles = evaluation_samples
     elif method == "svdd":
