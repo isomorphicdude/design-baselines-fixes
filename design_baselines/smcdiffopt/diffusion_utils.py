@@ -412,7 +412,9 @@ def extract_and_expand(array, n, target):
     Returns:
         torch.Tensor: The extracted and expanded tensor, same shape as target
     """
-    array = torch.from_numpy(array).to(target.device)[n].float()
+    array = torch.tensor(array, dtype=torch.float32, device=target.device)
+    array = array[n]
+    
     while array.ndim < target.ndim:
         array = array.unsqueeze(-1)
     return array.expand_as(target)
