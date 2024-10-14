@@ -8,6 +8,7 @@ import os
 from abc import abstractmethod, ABC
 
 import torch
+from torch.nn import functional as F
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
@@ -25,7 +26,8 @@ __SAMPLER__ = {}
 def register_sampler(name: str):
     def wrapper(cls):
         if __SAMPLER__.get(name, None):
-            raise NameError(f"Name {name} is already registered!")
+            # raise NameError(f"Name {name} is already registered!")
+            print(f"Name {name} is already registered!")
         __SAMPLER__[name] = cls
         return cls
 
@@ -34,13 +36,14 @@ def register_sampler(name: str):
 
 def get_sampler(name: str):
     if __SAMPLER__.get(name, None) is None:
-        raise NameError(f"Name {name} is not defined!")
+        # raise NameError(f"Name {name} is not defined!")
+        print(f"Name {name} is not defined!")
     return __SAMPLER__[name]
 
 
 def create_sampler(
     sampler,
-    model,
+    network,
     steps,
     shape,
     noise_schedule,
@@ -61,7 +64,7 @@ def create_sampler(
         timestep_respacing = [steps]
 
     base_model_kwargs = dict(
-        model=model,
+        network=network,
         betas=betas,
         shape=shape,
         model_mean_type=model_mean_type,
@@ -84,7 +87,7 @@ class GaussianDiffusion(ABC):
 
     def __init__(
         self,
-        model,
+        network,
         betas,
         shape,
         model_mean_type,
@@ -96,7 +99,7 @@ class GaussianDiffusion(ABC):
         eta=1.0,  # for DDIM
         scaler=None,  # sklearn object #TODO: implement for images
     ):
-        self.model = model
+        self.network = network
         self.device = device
         self.scaler = scaler
         self.shape = shape
@@ -187,9 +190,8 @@ class GaussianDiffusion(ABC):
         Returns:
             tuple (x_t, noise), both of x_0's shape.
         """
-        noise = torch.randn_like(x_0, device=self.device)
-        assert noise.shape == x_0.shape
-
+        noise = torch.randn_like(x_0).to(self.device)
+        
         coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_0)
         coef2 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, x_0)
 
@@ -220,7 +222,7 @@ class GaussianDiffusion(ABC):
         """
         Computes the mean and variance of the variational Markov chain p_theta(x_{t-1} | x_t).
         """
-        model_output = self.model(x_t, self._scale_timesteps(t))
+        model_output = self.network(x_t, self._scale_timesteps(t))
 
         # In the case of "learned" variance, model will give twice channels.
         if model_output.shape[1] == 2 * x_t.shape[1]:
@@ -267,7 +269,8 @@ class GaussianDiffusion(ABC):
         The function used for sampling from noise.
         """
         pass
-
+    
+    
     def train_loss_fn(self, data, t):
         """
         Computes the training loss.
@@ -279,14 +282,15 @@ class GaussianDiffusion(ABC):
             torch.Tensor: The training loss.
         """
         diffused, noise = self.forward_sample(data, t)
-        eps_pred = self.model(diffused, self._scale_timesteps(t))
-        loss = torch.mean((eps_pred - noise) ** 2)
+        eps_pred = self.network(diffused, t)
+        loss = F.mse_loss(eps_pred, noise)
         return loss
 
     def _scale_timesteps(self, t):
-        if self.rescale_timesteps:
-            return t.float() * (1000.0 / self.num_timesteps)
-        return t.float()
+        # if self.rescale_timesteps:
+        #     return t.float() * (1000.0 / self.num_timesteps)
+        # return t.float()
+        raise NotImplementedError
 
     def inverse_scaler(self, x):
         if self.scaler is not None:
@@ -331,31 +335,6 @@ class SpacedDiffusion(GaussianDiffusion):
     def sample(self, model, x_start):
         raise NotImplementedError
 
-    def _wrap_model(self, model):
-        if isinstance(model, _WrappedModel):
-            return model
-        return _WrappedModel(
-            model, self.timestep_map, self.rescale_timesteps, self.original_num_steps
-        )
-
-    def _scale_timesteps(self, t):
-        # Scaling is done by the wrapped model.
-        return t
-
-
-class _WrappedModel:
-    def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
-        self.model = model
-        self.timestep_map = timestep_map
-        self.rescale_timesteps = rescale_timesteps
-        self.original_num_steps = original_num_steps
-
-    def __call__(self, x, ts, **kwargs):
-        map_tensor = torch.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
-        new_ts = map_tensor[ts]
-        if self.rescale_timesteps:
-            new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
-        return self.model(x, new_ts, **kwargs)
 
 
 @register_sampler("ddpm")
