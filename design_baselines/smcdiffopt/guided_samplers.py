@@ -147,11 +147,16 @@ class SMCDiffOpt(SpacedDiffusion):
             writer.add_scalar(f"Objective_seed{seed}/mean", numerator.mean(), time_step)
         else:
             raise ValueError("Invalid task.")
-        return (
-            # original
-            numerator * self.anneal_schedule(time_step) * beta_scaling
-            - denominator * self.anneal_schedule(time_step - 1) * beta_scaling
-        )
+        
+        
+        if time_step > 0:
+            return (
+                # original
+                numerator * self.anneal_schedule(time_step - 1) * beta_scaling
+                - denominator * self.anneal_schedule(time_step) * beta_scaling
+            )
+        else:
+            return 0
 
         # return (
         #     # with dilation path
@@ -541,9 +546,16 @@ class SVDD(SMCDiffOpt):
                 )  # (batch * num_particles, 3, 256, 256)
                 # print(f"Time: {num_t}, std: {std}")
                 # get tweedie estimates
-                x_0_new = self.get_tweedie_est(num_t, x_t, eps_pred)
+                if num_t > 0:
+                    new_vec_t =  (torch.ones(model_input_shape[0]) * (reverse_ts[i])).to(
+                    x_t.device
+                )
+                    eps_pred_new = model_fn(x_new.view(*model_input_shape), new_vec_t)
+                    x_0_new = self.get_tweedie_est(num_t-1, x_t, eps_pred_new)
+                else:
+                    x_0_new = x_new
                 
-                objective_val = self.objective_fn(x_new)
+                objective_val = self.objective_fn(x_0_new)
                 
                 print(f"Iteration {num_t}, mean value: {objective_val.numpy().mean()}")
                 log_weights = beta_scaling * objective_val
