@@ -19,7 +19,7 @@ def compute_scores_from_dir(method, task):
     exps = []
     hyperparams = {} # {dir: (hyperparams, 100th percentile)}
     for dir in os.listdir(method):
-        if dir.startswith(method):
+        if dir.startswith(task):
             exps.append(dir)
             temp = None
             with open(os.path.join(method, dir, "hyperparams.json"), "r") as f:

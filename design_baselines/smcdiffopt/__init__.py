@@ -168,6 +168,7 @@ def smcdiffopt(
     # logging_dir = f"{method}_{seed}_{beta_scaling}_{noise_schedule}_{noise_sample_size}_{"
     
     hyperprams = dict(
+        task=task,
         method=method,  
         beta_scaling=beta_scaling,
         smooth_schedule=smooth_schedule,
