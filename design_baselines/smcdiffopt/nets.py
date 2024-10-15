@@ -15,17 +15,17 @@ class FullyConnectedWithTime(nn.Module):
         max_t: The maximum time value.
     """
     
-    def __init__(self, in_size: int, time_embed_size: int = 4, max_t: int = 999):
+    def __init__(self, in_size: int, time_embed_size: int = 4, max_t: int = 999, 
+                 hidden_size = 1024):
         super(FullyConnectedWithTime, self).__init__()
         out_size = in_size
         self.time_embed_size = time_embed_size
         self.max_t = max_t
         
         self.layers = nn.ModuleList([
-            nn.Linear(in_size + self.time_embed_size, 256),
-            nn.Linear(256, 256),
-            nn.Linear(256, 256),
-            nn.Linear(256, out_size),
+            nn.Linear(in_size + self.time_embed_size, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(hidden_size, out_size),
         ])
         
     def _get_time_embedding(self, t):
@@ -39,9 +39,10 @@ class FullyConnectedWithTime(nn.Module):
         return time_emb
         
     def forward(self, x, t):
-        t_fourier = self._get_time_embedding(t)
+        t_fourier = self._get_time_embedding(t).to(x.device)
         # rershape t_fourier to match the batch size
-        t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
+        if t_fourier.shape[0] != x.shape[0]:
+            t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
         x = torch.cat([x, t_fourier], dim=1)
         
         for layer in self.layers[:-1]:
