@@ -168,6 +168,7 @@ def smcdiffopt(
     # logging_dir = f"{method}_{seed}_{beta_scaling}_{noise_schedule}_{noise_sample_size}_{"
     
     hyperprams = dict(
+        task=task,
         method=method,  
         beta_scaling=beta_scaling,
         smooth_schedule=smooth_schedule,
@@ -249,7 +250,7 @@ def smcdiffopt(
 
     training_config = {
         "batch_size": 256,
-        "num_epochs": 15000,
+        "num_epochs": 1500,
         "learning_rate": 1e-3,
     }
 
@@ -263,8 +264,9 @@ def smcdiffopt(
     if task.is_discrete:
 
         def objective_fn(x):
+            batch_size = x.shape[0] if method == "svdd" else evaluation_samples
             inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(
-                evaluation_samples, *task.x.shape[1:]
+                batch_size, *task.x.shape[1:]
             )
             return task.predict(inv_transformed)
 
@@ -301,31 +303,31 @@ def smcdiffopt(
     nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
     
     diffusion_model = create_sampler(
-        sampler=method, model=nn_model, **model_config
+        sampler=method, network=nn_model, **model_config
     )
     writer = SummaryWriter(log_dir=os.path.join(logging_dir, "logs"))
 
     # try load weights of pre-trained diffusion model from logging directory
-    ckpt_dir = os.path.join(logging_dir, task_name)
+    ckpt_dir = os.path.join(task_name)
     def retrain():
         os.makedirs(ckpt_dir, exist_ok=True)
+        diffusion_model.network.to(model_config["device"])
+        optimizer = torch.optim.Adam(diffusion_model.network.parameters(), lr=training_config["learning_rate"])
         losses = train_model(
             diffusion_model=diffusion_model,
             train_loader=train_loader,
             val_loader=val_loader,
-            optimizer=torch.optim.Adam(
-                nn_model.parameters(), lr=training_config["learning_rate"]
-            ),
+            optimizer=optimizer,
             num_epochs=training_config["num_epochs"],
             writer=writer,
             device=model_config["device"],
             ckpt_dir=ckpt_dir,
         )
-        nn_model.load_state_dict(
+        diffusion_model.network.load_state_dict(
             torch.load(
-                os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                os.path.join(ckpt_dir, f"checkpoint_{training_config['num_epochs']-1}.pt"),
                 map_location="cpu",
-            )
+            )['model_state_dict']
         )
         return losses
     if not retrain_model:
@@ -334,14 +336,14 @@ def smcdiffopt(
             repo_id = "isomorphicdude/SMCDiffOpt"
             file_name = f"{task_name}.pt"
             download_path = hf_hub_download(repo_id, file_name)
-            nn_model.load_state_dict(torch.load(download_path, map_location="cpu"))
+            diffusion_model.network.load_state_dict(torch.load(download_path, map_location="cpu")['model_state_dict'])
         except:
             # load from local weights
             try:
                 logging.info("Loading pre-trained weights from local...")
-                nn_model.load_state_dict(
+                diffusion_model.network.load_state_dict(
                     torch.load(
-                        os.path.join(ckpt_dir, f"model_{training_config['num_epochs']}.pt"),
+                        os.path.join(ckpt_dir, f"checkpoint_{training_config['num_epochs']-1}.pt"),
                         map_location="cpu",
                     )['model_state_dict']
                 )
