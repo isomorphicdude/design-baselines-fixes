@@ -15,17 +15,17 @@ class FullyConnectedWithTime(nn.Module):
         max_t: The maximum time value.
     """
     
-    def __init__(self, in_size: int, time_embed_size: int = 4, max_t: int = 999, 
-                 hidden_size = 1024):
+    def __init__(self, in_size: int, time_embed_size: int = 4, max_t: int = 999):
         super(FullyConnectedWithTime, self).__init__()
         out_size = in_size
         self.time_embed_size = time_embed_size
         self.max_t = max_t
         
         self.layers = nn.ModuleList([
-            nn.Linear(in_size + self.time_embed_size, hidden_size),
-            nn.Linear(hidden_size, hidden_size),
-            nn.Linear(hidden_size, out_size),
+            nn.Linear(in_size + self.time_embed_size, 256),
+            nn.Linear(256, 256),
+            nn.Linear(256, 256),
+            nn.Linear(256, out_size),
         ])
         
     def _get_time_embedding(self, t):
@@ -39,12 +39,10 @@ class FullyConnectedWithTime(nn.Module):
         return time_emb
         
     def forward(self, x, t):
-        t_fourier = self._get_time_embedding(t).to(x.device)
+        t_fourier = self._get_time_embedding(t)
         # rershape t_fourier to match the batch size
-        if t_fourier.shape[0] != x.shape[0]:
-            t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
+        t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
         x = torch.cat([x, t_fourier], dim=1)
-        
         for layer in self.layers[:-1]:
             x = F.relu(layer(x))
         
@@ -251,11 +249,12 @@ class SmallUNet(nn.Module):
     
     def forward(self, x , t): # x (bs,in_channels,w,d)
         bs = x.shape[0]
-        if len(t) < bs:
-            t = t.repeat(x.shape[0])
+        # if len(t) < bs:
+        #     t = t.repeat(x.shape[0])
         if not t.dtype == torch.long:
             t = t.long()
         t = self.time_embed(t)
+        
         x1 = self.conv1(x+self.te1(t).reshape(bs, -1, 1, 1)) # (bs,64,w,d)
         x2 = self.down1(x1+self.te2(t).reshape(bs, -1, 1, 1)) # (bs,128,w/2,d/2)
         x3 = self.down2(x2+self.te3(t).reshape(bs, -1, 1, 1)) # (bs,256,w/4,d/4)
