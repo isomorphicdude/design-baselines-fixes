@@ -120,6 +120,7 @@ class GaussianDiffusion(ABC):
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.sqrt_alphas_cumprod_prev = np.sqrt(self.alphas_cumprod_prev)
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
+        self.sqrt_one_minus_alphas_cumprod_next = np.sqrt(1.0 - self.alphas_cumprod_next)
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
