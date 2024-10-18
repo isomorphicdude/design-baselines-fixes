@@ -344,8 +344,6 @@ class SMCDiffOpt(SpacedDiffusion):
         )
 
         x_0 = (x_t - sqrt_1m_alpha * eps_pred) / m
-        x_01 = self.get_tweedie_est(timestep, x_t, eps_pred)
-        print(f"Time: {timestep}, diff: {torch.norm(x_0 - x_01)}")
         
         coeff1 = (
             torch.sqrt((v_prev / v) * (1 - alpha_cumprod / alpha_cumprod_prev))
