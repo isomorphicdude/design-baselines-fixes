@@ -137,10 +137,16 @@ logging.basicConfig(
     help="The method to use for model-based optimization.",
 )
 @click.option(
-    "--smooth-schedule",
-    default="diffusion",
-    type=str,
+    "--anneal",
+    default=False,
+    type=bool,
     help="The schedule to use for Gaussian smoothing.",
+)
+@click.option(
+    "--use-x0",
+    default=False,
+    type=bool,
+    help="Whether to use E[x0|xt] as the evaluation point for the oracle.",
 )
 def smcdiffopt(
     logging_dir,
@@ -157,7 +163,8 @@ def smcdiffopt(
     retrain_model,
     noise_sample_size,
     method,
-    smooth_schedule,
+    anneal,
+    use_x0,
 ) -> None:
     """Main function for smcdiff_opt for model-based optimization."""
     tf.random.set_seed(seed)
@@ -171,8 +178,9 @@ def smcdiffopt(
         task=task,
         method=method,  
         beta_scaling=beta_scaling,
-        smooth_schedule=smooth_schedule,
+        anneal=anneal,
         noise_sample_size=noise_sample_size,
+        use_x0=use_x0,
     )
     
     logging_dir = os.path.join(logging_dir, "_".join([f"{v}" for k, v in hyperprams.items()]))
@@ -264,7 +272,7 @@ def smcdiffopt(
     if task.is_discrete:
 
         def objective_fn(x):
-            batch_size = x.shape[0] if method == "svdd" else evaluation_samples
+            batch_size = x.shape[0] if method == "svdd" else evaluation_samples * noise_sample_size
             inv_transformed = scaler.inverse_transform(x.cpu().numpy()).reshape(
                 batch_size, *task.x.shape[1:]
             )
@@ -276,12 +284,12 @@ def smcdiffopt(
     # initialise the model
     if method == "smcdiffopt":
         sample_shape = (1, np.prod(task.x.shape[1:]))
-    elif method == "svdd":
+    else:
         sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
         
     # NOTE: if training from scratch, need to set num_timesteps to 1000
     model_config = {
-        "steps": num_timesteps,
+        "steps": 1000,
         "shape": sample_shape,
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
@@ -295,12 +303,14 @@ def smcdiffopt(
         "sampling_task": "optimisation",
         "objective_fn": objective_fn,
         "noise_sample_size": noise_sample_size,
-        "smooth_schedule": smooth_schedule,
+        "anneal": anneal,
+        "use_x0": use_x0,
     }
 
     dim_x = np.prod(task.x.shape[1:])
     # network takes in t in [0, 1], thus needs to divide by max_t
-    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4, max_t=num_timesteps - 1)
+    # this is done automatically by the rescaling
+    nn_model = FullyConnectedWithTime(dim_x, time_embed_size=4)
     
     diffusion_model = create_sampler(
         sampler=method, network=nn_model, **model_config
@@ -355,24 +365,29 @@ def smcdiffopt(
             
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
-    x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
-        model_config["device"]
-    )
+    # x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
+    #     model_config["device"]
+    # )
     diffusion_model.network.to(model_config["device"])
     diffusion_model.network.eval()
     if method == "smcdiffopt":
         num_particles = evaluation_samples
-    elif method == "svdd":
+    else:
         num_particles = noise_sample_size
+        
+    # first few val samples
+    test_val_samples = val_data[:evaluation_samples]    
+    
     x = diffusion_model.sample(
-        x_start=x_start,
+        x_start=None,
         y_obs=None,
         num_particles=num_particles,
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
         writer=writer,
-        seed=seed
+        seed=seed,
+        val_samples=test_val_samples,
     )
 
     # evaluate and save the results

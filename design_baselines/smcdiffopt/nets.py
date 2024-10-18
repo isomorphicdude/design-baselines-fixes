@@ -43,7 +43,6 @@ class FullyConnectedWithTime(nn.Module):
         # rershape t_fourier to match the batch size
         t_fourier = t_fourier.expand(x.shape[0], -1).to(x.device)
         x = torch.cat([x, t_fourier], dim=1)
-        
         for layer in self.layers[:-1]:
             x = F.relu(layer(x))
         
@@ -250,11 +249,12 @@ class SmallUNet(nn.Module):
     
     def forward(self, x , t): # x (bs,in_channels,w,d)
         bs = x.shape[0]
-        if len(t) < bs:
-            t = t.repeat(x.shape[0])
+        # if len(t) < bs:
+        #     t = t.repeat(x.shape[0])
         if not t.dtype == torch.long:
             t = t.long()
         t = self.time_embed(t)
+        
         x1 = self.conv1(x+self.te1(t).reshape(bs, -1, 1, 1)) # (bs,64,w,d)
         x2 = self.down1(x1+self.te2(t).reshape(bs, -1, 1, 1)) # (bs,128,w/2,d/2)
         x3 = self.down2(x2+self.te3(t).reshape(bs, -1, 1, 1)) # (bs,256,w/4,d/4)

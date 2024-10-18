@@ -174,3 +174,6 @@ outputs/
 
 *.ipynb_checkpoints
 *.ipynb
+
+*.pt
+design_baselines/sde_models
