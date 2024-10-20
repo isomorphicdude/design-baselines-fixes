@@ -1,4 +1,5 @@
 import os
+import gc
 import math
 
 
@@ -126,7 +127,7 @@ logging.basicConfig(
 )
 @click.option(
     "--noise-sample-size",
-    default=10,
+    default=1,
     type=int,
     help="The number of samples to use for noise estimation.",
 )
@@ -349,6 +350,7 @@ def smcdiffopt(
             diffusion_model.network.load_state_dict(torch.load(download_path, map_location="cpu")['model_state_dict'])
         except:
             # load from local weights
+            logging.info("No pre-trained weights found on HuggingFace, trying local...")
             try:
                 logging.info("Loading pre-trained weights from local...")
                 diffusion_model.network.load_state_dict(
@@ -389,7 +391,12 @@ def smcdiffopt(
         seed=seed,
         val_samples=test_val_samples,
     )
-
+    torch.cuda.empty_cache()
+    del nn_model
+    del diffusion_model
+    gc.collect()
+    
+    
     # evaluate and save the results
     solution = x if isinstance(x, np.ndarray) else x.cpu().detach().numpy()
     try:
