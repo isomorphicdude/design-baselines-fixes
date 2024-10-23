@@ -40,6 +40,8 @@ class SMCDiffOpt(SpacedDiffusion):
         self.num_timesteps = int(self.betas.shape[0])
         self.anneal = anneal
         self.use_x0 = use_x0
+        self.model_fn = get_model_fn(self.network, train=False)
+        self.ts = [i for i in range(1000) if i in self.use_timesteps]
        
     @property
     def anneal_schedule(self):
@@ -94,24 +96,6 @@ class SMCDiffOpt(SpacedDiffusion):
             denominator = self._log_gauss_liklihood(x_t_old, obs_old, c_old, d_old)
 
         elif self.task == "optimisation":
-            # sample new random vectors
-            # expanded_shape = (x_new.shape[0], self.noise_sample_size, x_new.shape[1])
-            # new_noise = torch.randn(expanded_shape, device=x_new.device)
-            # old_noise = torch.randn(expanded_shape, device=x_old.device)
-            
-            # new_obj_input = (
-            #     x_new_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
-            #     + std_new * new_noise
-            # )
-            # old_obj_input = (
-            #     x_old_mean[:, None, :].repeat(1, self.noise_sample_size, 1)
-            #     + std_old * old_noise
-            # )
-
-            # squeezed_shape = (x_new.shape[0] * self.noise_sample_size, -1)
-            # _numerator = self.objective_fn(new_obj_input.reshape(*squeezed_shape))
-            # _denominator = self.objective_fn(old_obj_input.reshape(*squeezed_shape))
-                
             x_t_new_numerator = self.objective_fn(x_t_new).numpy()
             x_t_old_numerator = self.objective_fn(x_t_old).numpy()
             
@@ -130,8 +114,6 @@ class SMCDiffOpt(SpacedDiffusion):
             denominator = torch.tensor(
                 _denominator, device=self.device
             ).squeeze(-1)
-            # numerator = numerator.reshape(*expanded_shape[:-1]).mean(dim=1)
-            # denominator = denominator.reshape(*expanded_shape[:-1]).mean(dim=1)
         else:
             raise ValueError("Invalid task.")
         
@@ -186,10 +168,6 @@ class SMCDiffOpt(SpacedDiffusion):
         seed = kwargs.get("seed", None)
         assert seed is not None, "Seed must be provided."
 
-        ts = [i for i in range(1000) if i in self.use_timesteps]
-
-        model_fn = get_model_fn(self.network, train=False)
-
         # flattened initial x, shape (batch * num_particles, dim_x)
         # where for images dim = 3*256*256
         model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
@@ -200,8 +178,8 @@ class SMCDiffOpt(SpacedDiffusion):
         # initial sampling step P(x_T)exp(beta * f(x_T))
         with torch.no_grad():
             if self.use_x0:
-                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * ts[-1]
-                eps_pred = model_fn(x_t.view(*model_input_shape), vec_0)
+                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
+                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
                 # get x_0
                 x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
                 f_val = self.objective_fn(x_0.view(*model_input_shape)).numpy()
@@ -238,10 +216,10 @@ class SMCDiffOpt(SpacedDiffusion):
                     y_new = None
                     y_old = None
 
-                vec_t = (torch.ones(self.shape[0]) * (ts[num_t])).to(x_t.device)
+                vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t])).to(x_t.device)
 
                 # noise predicting model
-                eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
+                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_t)
                 if eps_pred.shape[1] == 2 * self.shape[1]:
                     eps_pred, model_var_values = torch.split(
                         eps_pred, self.shape[1], dim=1
@@ -254,43 +232,25 @@ class SMCDiffOpt(SpacedDiffusion):
                     return_std=True
                 )  # (batch * num_particles, 3, 256, 256)
 
-                new_vec_t = (torch.ones(self.shape[0]) * (ts[num_t - 1])).to(x_t.device)
-                eps_pred_new = model_fn(x_new.view(*model_input_shape), new_vec_t)
+                new_vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
+                eps_pred_new = self.model_fn(x_new.view(*model_input_shape), new_vec_t)
                 
                 x_0_new = self.get_tweedie_est(num_t-1, x_new, eps_pred_new)
                 
-                # new_noise = (self.sqrt_one_minus_alphas_cumprod)**2 * (1 - self.sqrt_one_minus_alphas_cumprod**2)
-                # new_noise = self.sqrt_one_minus_alphas_cumprod if i <= self.num_timesteps//10000 else np.zeros_like(self.sqrt_one_minus_alphas_cumprod)
-                # x_0_new += torch.randn_like(x_0_new, device=x_t.device) * extract_and_expand(new_noise,
-                #     num_t, x_0_new)
-                # x_0_old += torch.randn_like(x_0_old, device=x_t.device) * extract_and_expand(new_noise,
-                #     num_t, x_0_old)
-                
                 
                 x_input_shape = (self.shape[0] * num_particles, -1)
-                if self.use_x0:
-                    log_weights, xt_mean, xt_max, x0_mean, x0_max = self.get_log_potential(
-                        x_0_new.view(*x_input_shape),
-                        x_0_old.view(*x_input_shape),
-                        y_new,
-                        y_old,
-                        x_new.view(*x_input_shape),
-                        x_t.view(*x_input_shape),
-                        num_t,
-                        beta_scaling=beta_scaling,
-                    )
-                    log_weights = log_weights.view(self.shape[0], num_particles)
-                else:
-                    log_weights, xt_mean, xt_max, x0_mean, x0_max = self.get_log_potential(
-                        x_new.view(*x_input_shape),
-                        x_t.view(*x_input_shape),
-                        y_new,
-                        y_old,
-                        x_new.view(*x_input_shape),
-                        x_t.view(*x_input_shape),
-                        num_t,
-                        beta_scaling=beta_scaling,                    )
-                    log_weights = log_weights.view(self.shape[0], num_particles)    
+                
+                log_weights, xt_mean, xt_max, x0_mean, x0_max = self.get_log_potential(
+                    x_0_new.view(*x_input_shape),
+                    x_0_old.view(*x_input_shape),
+                    y_new,
+                    y_old,
+                    x_new.view(*x_input_shape),
+                    x_t.view(*x_input_shape),
+                    num_t,
+                    beta_scaling=beta_scaling,
+                )
+                log_weights = log_weights.view(self.shape[0], num_particles)
 
                 # normalise weights
                 log_weights = log_weights - torch.logsumexp(
@@ -306,7 +266,7 @@ class SMCDiffOpt(SpacedDiffusion):
                 writer.add_scalar(f"SMCDiff_seed{seed}/x0_max", x0_max.item(), i)
                 print(f"Iteration {num_t}, max value: {xt_max.item()}")
                 
-                if i != len(ts) - 1:
+                if i != len(self.ts) - 1:
                     resample_idx = self.resample(
                         torch.exp(log_weights).view(-1), method=resampling_method
                     )
@@ -549,8 +509,6 @@ class SVDD(SMCDiffOpt):
         assert seed is not None, "Seed must be provided."
 
         ts = [i for i in range(1000) if i in self.use_timesteps]
-        
-        model_fn = get_model_fn(self.network, train=False)
 
         # initial x
         x_t = torch.randn((self.shape[0], 1, np.prod(self.shape[1:])), device=self.device)
@@ -565,8 +523,8 @@ class SVDD(SMCDiffOpt):
                     .reshape(*model_input_shape)
             )
             if self.use_x0:
-                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * ts[-1]
-                eps_pred = model_fn(x_t.view(*model_input_shape), vec_0)
+                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
+                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
                 # get x_0
                 x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
                 f_val = self.objective_fn(x_0.view(*model_input_shape)).numpy()
@@ -607,13 +565,13 @@ class SVDD(SMCDiffOpt):
                     .reshape(*model_input_shape)
                 )
 
-                vec_t = (torch.ones(model_input_shape[0]) * (ts[num_t])).to(
+                vec_t = (torch.ones(model_input_shape[0]) * (self.ts[num_t])).to(
                     x_t.device
                 )
                 
                 
                 # noise predicting model
-                eps_pred = model_fn(x_t.view(*model_input_shape), vec_t)
+                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_t)
 
                 x_new, x_mean_new, std, x0 = self._proposal_X_t(
                     num_t,
@@ -624,10 +582,10 @@ class SVDD(SMCDiffOpt):
                 # print(f"Time: {num_t}, std: {std}")
                 # get tweedie estimates
                 if num_t > 0:
-                    new_vec_t =  (torch.ones(model_input_shape[0]) * (ts[num_t-1])).to(
+                    new_vec_t =  (torch.ones(model_input_shape[0]) * (self.ts[num_t-1])).to(
                     x_t.device
                 )
-                    eps_pred_new = model_fn(x_new.view(*model_input_shape), new_vec_t)
+                    eps_pred_new = self.model_fn(x_new.view(*model_input_shape), new_vec_t)
                     x_0_new = self.get_tweedie_est(num_t-1, x_new, eps_pred_new)
                     # x_0_new += torch.randn_like(x_0_new, device=x_t.device) * self.sqrt_one_minus_alphas_cumprod[num_t-1] 
                 else:
@@ -711,8 +669,6 @@ class Unconditional(SMCDiffOpt):
 
         ts = [i for i in range(1000) if i in self.use_timesteps]
 
-        model_fn = get_model_fn(self.network, train=False)
-
         # flattened initial x, shape (batch * num_particles, dim_x)
         # where for images dim = 3*256*256
         x_start = kwargs.get("x_start", None)
@@ -725,12 +681,12 @@ class Unconditional(SMCDiffOpt):
 
         with torch.no_grad():
             for i, num_t in enumerate(list(range(self.num_timesteps))[::-1]):
-                vec_t = (torch.ones(x_t.shape[0]) * (ts[num_t])).to(x_t.device)
+                vec_t = (torch.ones(x_t.shape[0]) * (self.ts[num_t])).to(x_t.device)
         
                 model_input_shape = (self.shape[0], *self.shape[1:])
 
                 # noise predicting model
-                eps_pred = model_fn(x_t, vec_t)
+                eps_pred = self.model_fn(x_t, vec_t)
 
                 x_new, x_mean_new, std_new, x_0_old = self._proposal_X_t(
                     num_t,
