@@ -184,7 +184,7 @@ def smcdiffopt(
         use_x0=use_x0,
     )
     
-    logging_dir = os.path.join(logging_dir, "_".join([f"{v}" for k, v in hyperprams.items()]))
+    logging_dir = os.path.join(method, "_".join([f"{v}" for k, v in hyperprams.items()]))
     
     params = dict(
         logging_dir=logging_dir,
@@ -283,7 +283,7 @@ def smcdiffopt(
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
 
     # initialise the model
-    if method == "smcdiffopt":
+    if method == "smcdiffopt" or method == "nested":
         sample_shape = (1, np.prod(task.x.shape[1:]))
     else:
         sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
@@ -372,7 +372,7 @@ def smcdiffopt(
     # )
     diffusion_model.network.to(model_config["device"])
     diffusion_model.network.eval()
-    if method == "smcdiffopt":
+    if method == "smcdiffopt" or method == "nested":
         num_particles = evaluation_samples
     else:
         num_particles = noise_sample_size
@@ -390,6 +390,7 @@ def smcdiffopt(
         writer=writer,
         seed=seed,
         val_samples=test_val_samples,
+        noise_sample_size=noise_sample_size,
     )
     torch.cuda.empty_cache()
     del nn_model
