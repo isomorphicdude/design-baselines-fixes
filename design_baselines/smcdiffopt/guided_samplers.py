@@ -108,7 +108,7 @@ class SMCDiffOpt(SpacedDiffusion):
             else:
                 _numerator = x_t_new_numerator
                 _denominator = x_t_old_numerator
-                
+            
             # to device
             numerator = torch.tensor(_numerator, device=self.device).squeeze(-1)
             denominator = torch.tensor(
@@ -176,36 +176,9 @@ class SMCDiffOpt(SpacedDiffusion):
         )
         
         # initial sampling step P(x_T)exp(beta * f(x_T))
-        with torch.no_grad():
-            if self.use_x0:
-                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
-                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
-                # get x_0
-                x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
-                f_val = self.objective_fn(x_0.view(*model_input_shape)).numpy()
-                log_weights = beta_scaling * f_val
-            else:
-                # directly evaluate f(x_T)
-                log_weights = beta_scaling * self.objective_fn(x_t.view(*model_input_shape)).numpy()
-            
-            if self.anneal:
-                log_weights = log_weights * self.anneal_schedule(self.num_timesteps - 1)
-                
-            log_weights = torch.tensor(log_weights, device=x_t.device).view(
-                self.shape[0], num_particles
-            )
-            log_weights = log_weights - torch.logsumexp(
-                    log_weights, dim=1, keepdim=True
-            )
-            
-            # resample the initial particles
-            resample_idx = self.resample(
-                            torch.exp(log_weights).view(-1), method=resampling_method
-            )
-            x_t = (x_t.view(self.shape[0], num_particles, -1))[
-                torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
-            ]
-            
+        x_t = self._initialize(
+            x_t, num_particles, beta_scaling, model_input_shape, resampling_method
+        )
         
         with torch.no_grad():
             for i, num_t in enumerate(list(range(self.num_timesteps))[::-1]):
@@ -290,9 +263,6 @@ class SMCDiffOpt(SpacedDiffusion):
             return self.inverse_scaler(
                 x_t.view(num_particles, self.shape[0], *self.shape[1:]).squeeze()
             )
-
-    def p_sample(self, x, t, model):
-        raise NotImplementedError("p_sample not implemented for SMCDiffOpt.")
 
     def get_tweedie_est(self, timestep, x_t, eps_pred):
         """
@@ -476,6 +446,38 @@ class SMCDiffOpt(SpacedDiffusion):
         """
         # if method == "default":
         return obs * self.sqrt_alphas_cumprod[-(t + 1)]
+    
+    def _initialize(self, x_t, num_particles, beta_scaling, model_input_shape, resampling_method):
+        with torch.no_grad():
+            if self.use_x0:
+                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
+                eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
+                # get x_0
+                x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
+                f_val = self.objective_fn(x_0.view(*model_input_shape)).numpy()
+                log_weights = beta_scaling * f_val
+            else:
+                # directly evaluate f(x_T)
+                log_weights = beta_scaling * self.objective_fn(x_t.view(*model_input_shape)).numpy()
+            
+            if self.anneal:
+                log_weights = log_weights * self.anneal_schedule(self.num_timesteps - 1)
+                
+            log_weights = torch.tensor(log_weights, device=x_t.device).view(
+                self.shape[0], num_particles
+            )
+            log_weights = log_weights - torch.logsumexp(
+                    log_weights, dim=1, keepdim=True
+            )
+            
+            # resample the initial particles
+            resample_idx = self.resample(
+                            torch.exp(log_weights).view(-1), method=resampling_method
+            )
+            x_t = (x_t.view(self.shape[0], num_particles, -1))[
+                torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+            ]
+        return x_t
 
 
 # implements SVDD in Li et al. 2024
@@ -710,3 +712,204 @@ class Unconditional(SMCDiffOpt):
             return x0_samples, xt_samples
         else:
             return self.inverse_scaler(x_t)
+        
+        
+@register_sampler(name="nested")
+class NestedSMC(SMCDiffOpt):
+    def sample(
+        self,
+        y_obs,
+        return_list=False,
+        **kwargs,
+    ):
+        samples = []
+        num_particles = kwargs.get("num_particles", 10)
+        score_output = kwargs.get("score_output", False)
+        sampling_method = kwargs.get("sampling_method", "conditional")
+        resampling_method = kwargs.get("resampling_method", "systematic")
+        beta_scaling = kwargs.get("beta_scaling", 200.0)
+        writer = kwargs.get("writer", None)
+        seed = kwargs.get("seed", None)
+        noise_sample_size = kwargs.get("noise_sample_size", 10)
+        assert seed is not None, "Seed must be provided."        
+
+        # flattened initial x, shape (batch * num_particles, dim_x)
+        # where for images dim = 3*256*256
+        model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
+        
+        # initial sampling step P(x_T)exp(beta * f(x_T))
+        # the same initialisation, without nested IS
+        x_t = torch.randn(
+            (self.shape[0] * num_particles, np.prod(self.shape[1:])), device=self.device
+        )
+        x_t = self._initialize(
+            x_t, num_particles, beta_scaling, model_input_shape, resampling_method
+        )
+        
+        # permute so easier to repeat
+        x_t = x_t.permute(1, 0, 2) # (num_particles, 1, dim_x)
+        
+        # nested IS begins here
+        expanded_shape = (num_particles, noise_sample_size, *self.shape[1:])
+        collapsed_shape = (num_particles * noise_sample_size, *self.shape[1:])
+        
+        with torch.no_grad():
+            for i, num_t in enumerate(list(range(self.num_timesteps))[::-1]):
+                if self.task == "inverse_problem":
+                    y_new = self._get_obs(y_obs, i, num_particles, method="default")
+                    y_old = self._get_obs(y_obs, i - 1, num_particles, method="default")
+                elif self.task == "optimisation":
+                    y_new = None
+                    y_old = None
+
+                x_t = x_t.repeat(1, noise_sample_size, 1) # (num_particles, noise_sample_size, dim_x)
+                vec_t = (torch.ones(noise_sample_size * num_particles) * (self.ts[num_t])).to(x_t.device)
+
+                # noise predicting model
+                eps_pred = self.model_fn(x_t.view(*collapsed_shape), vec_t)
+
+                x_new, log_weights, val_dict = self._nested_sample(
+                    expanded_shape,
+                     collapsed_shape,
+                     num_t,
+                     x_t,
+                     eps_pred,
+                     beta_scaling,
+                     noise_sample_size,
+                     num_particles
+                )
+                
+                # normalise weights
+                log_weights = log_weights - torch.logsumexp(
+                    log_weights, dim=1, keepdim=True
+                )
+                
+                xt_mean, xt_max, x0_mean, x0_max = val_dict["xt_mean"], val_dict["xt_max"], val_dict["x0_mean"], val_dict["x0_max"]
+
+                # record ess as usual
+                ess = torch.exp(-torch.logsumexp(2 * log_weights, dim=1)).item()
+                writer.add_scalar(f"ESS_seed{seed}", ess, i)
+                writer.add_scalar(f"SMCDiff_seed{seed}/xt_mean", xt_mean, i)
+                writer.add_scalar(f"SMCDiff_seed{seed}/xt_max", xt_max, i)
+                writer.add_scalar(f"SMCDiff_seed{seed}/x0_mean", x0_mean, i)
+                writer.add_scalar(f"SMCDiff_seed{seed}/x0_max", x0_max, i)
+                print(f"Iteration {num_t}, max value: {xt_max}")
+                                
+                if i != len(self.ts) - 1 and ess < 0.5 * num_particles:
+                    print(torch.exp(log_weights).view(-1))
+                    resample_idx = self.resample(
+                        torch.exp(log_weights).view(-1), method=resampling_method
+                    )
+                    x_new = (x_new.view(self.shape[0], num_particles, -1))[
+                        torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+                    ]
+
+                x_t = x_new
+                if return_list:
+                    samples.append(
+                        x_t.reshape(self.shape[0] * num_particles, *self.shape[1:])
+                    )
+                
+
+
+        # apply inverse scaler
+        if return_list:
+            for i in range(len(samples)):
+                samples[i] = self.inverse_scaler(samples[i].squeeze())
+            return samples, torch.exp(log_weights)
+        else:
+            return self.inverse_scaler(
+                x_t.view(num_particles, *self.shape[1:])
+            )
+     
+    def _nested_sample(self,
+                     expanded_shape,
+                     collapsed_shape,
+                     num_t: int,
+                     x_t: torch.Tensor,
+                     eps_pred: torch.Tensor,
+                     beta_scaling: float = 200.0,
+                     noise_sample_size: int = 10,
+                     num_particles: int = 10,
+                     ):
+        x_new, x_mean_new, std_new, x_0_old = self._proposal_X_t(
+                                                                num_t,
+                                                                x_t.view(*collapsed_shape),
+                                                                eps_pred,
+                                                                return_std=True)                                                                 
+        new_vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
+        eps_pred_new = self.model_fn(x_new.view(*collapsed_shape), new_vec_t)
+        
+        
+        x_0_new = self.get_tweedie_est(num_t-1, x_new, eps_pred_new)
+        
+        
+        batch_log_weights, xt_mean, xt_max, x0_mean, x0_max = self.get_log_potential(
+                    x_0_new.view(*collapsed_shape),
+                    x_0_old.view(*collapsed_shape),
+                    None,
+                    None,
+                    x_new.view(*collapsed_shape),
+                    x_t.view(*collapsed_shape),
+                    num_t,
+                    beta_scaling=beta_scaling, 
+        )
+        
+        # subtract the proposal log pdf
+        # batch_log_weights -= self._forward_log_pdf(
+        #     xt=x_t.view(*collapsed_shape),
+        #     x_new=x_new.view(*collapsed_shape),
+        #     xt_std = std_new
+        # )
+        
+        log_weights = batch_log_weights.view(
+            num_particles, noise_sample_size
+        )
+        
+        mean_log_weights = torch.logsumexp(log_weights, dim=1, keepdim=True)
+        
+        log_weights = log_weights - mean_log_weights
+        
+        if num_t > 0:
+            # resample_idx = torch.multinomial(
+            #         torch.exp(log_weights), 1, replacement=True
+            # )
+            resample_idx = torch.argmax(
+                log_weights, dim=1, keepdim=True
+            )
+        else:
+            resample_idx = torch.zeros((num_particles, 1), device=x_t.device, dtype=torch.long)
+            mean_log_weights = torch.zeros((num_particles, 1), device=x_t.device)
+            
+        x_new = (x_new.view(*expanded_shape))[
+            torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+        ]
+        x_new = x_new.squeeze(0)
+    
+        # take mean over dim=1
+        # else:
+            # mean_log_weights = torch.zeros((num_particles, 1), device=x_t.device)
+            # x_new = x_new.reshape(num_particles, *self.shape[1:])
+            
+        val_dict = {
+            "xt_mean": xt_mean.item(),
+            "xt_max": xt_max.item(),
+            "x0_mean": x0_mean.item(),
+            "x0_max": x0_max.item()
+        }
+        
+        return x_new, mean_log_weights[None], val_dict
+        
+        
+    def _forward_log_pdf(self, xt, x_new, xt_std):
+        """
+        Compute the log pdf of the forward transition.
+        Assume xt has shape (batch, dim_x).
+        """
+        dim_x = xt.shape[1]
+        potential = torch.sum(-0.5 * (xt - x_new)**2 / xt_std**2, dim=1)
+        return potential - 0.5 * dim_x * math.log(2 * math.pi) - dim_x * torch.log(xt_std.flatten()[0])
+        
+        
+        
+               
