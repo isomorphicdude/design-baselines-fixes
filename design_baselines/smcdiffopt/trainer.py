@@ -34,21 +34,28 @@ def train_model(
     save_every: int = 100,
     num_time_steps: int = 1000,
     verbose: bool = True,
+    in_notebook: bool = False,
 ):
+    if in_notebook:
+        from tqdm.notebook import tqdm
     # load latest checkpoint
-    if os.path.exists(ckpt_dir) and os.listdir(ckpt_dir):
-        logging.info("Loading latest checkpoint")
-        latest_ckpt = max(
-            [int((f.split("_")[1].split("."))[0]) for f in os.listdir(ckpt_dir)]
-        )
-        checkpoint = torch.load(
-            os.path.join(ckpt_dir, f"checkpoint_{latest_ckpt}.pt")
-        )
-        diffusion_model.network.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        start_epoch = checkpoint["epoch"]
-        logging.info(f"Loaded checkpoint from epoch {start_epoch}")
-    else:
+    try:
+        if os.path.exists(ckpt_dir) and os.listdir(ckpt_dir):
+            logging.info("Loading latest checkpoint")
+            latest_ckpt = max(
+                [int((f.split("_")[1].split("."))[0]) for f in os.listdir(ckpt_dir)]
+            )
+            checkpoint = torch.load(
+                os.path.join(ckpt_dir, f"checkpoint_{latest_ckpt}.pt")
+            )
+            diffusion_model.network.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            start_epoch = checkpoint["epoch"]
+            logging.info(f"Loaded checkpoint from epoch {start_epoch}")
+        else:
+            start_epoch = 0
+    except:
+        logging.info("No checkpoint found, starting from scratch")
         start_epoch = 0
     
     logging.info(f"Training for {num_epochs} epochs")
@@ -75,15 +82,15 @@ def train_model(
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            
             loss_logs = {"loss": loss.detach().item(), "step": global_step}
             losses.append(loss.detach().item())
             if verbose and epoch % print_every == 0:
                 progress_bar.update(1)
                 progress_bar.set_postfix(**loss_logs)
             global_step += 1
-            
-            writer.add_scalar("Loss/train", loss.detach().item(), epoch)
+            if writer is not None:
+                writer.add_scalar("Loss/train", loss.detach().item(), epoch)
         if verbose and epoch % print_every == 0:
             progress_bar.close()
         
