@@ -432,7 +432,7 @@ def expand_as(array, target):
     while array.ndim < target.ndim:
         array = array.unsqueeze(-1)
 
-    return array.expand_as(target).to(target.device)
+    return array.to(target.device)
 
 
 def get_model_fn(model, train=False):
