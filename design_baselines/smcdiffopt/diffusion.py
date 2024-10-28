@@ -5,6 +5,7 @@ A continuous version will be implemented in diffopt.
 """
 
 import os
+import math
 from abc import abstractmethod, ABC
 
 import torch
@@ -16,6 +17,7 @@ from .diffusion_utils import (
     get_mean_processor,
     get_var_processor,
     extract_and_expand,
+    expand_as,
     space_timesteps,
     get_named_beta_schedule,
 )
@@ -54,27 +56,38 @@ def create_sampler(
     rescale_timesteps,
     timestep_respacing="ddim100",
     device="cpu",
+    sde=None,
+    eps=1e-3,
     **kwargs,
 ):
-
-    sampler = get_sampler(name=sampler)
-
     betas = get_named_beta_schedule(noise_schedule, steps)
+    
     if not timestep_respacing:
         timestep_respacing = [steps]
-
-    base_model_kwargs = dict(
-        network=network,
-        betas=betas,
-        shape=shape,
-        model_mean_type=model_mean_type,
-        model_var_type=model_var_type,
-        dynamic_threshold=dynamic_threshold,
-        clip_denoised=clip_denoised,
-        rescale_timesteps=rescale_timesteps,
-        use_timesteps=space_timesteps(steps, timestep_respacing),
-        device=device,
-    )
+    
+    if "sgm" not in sampler:
+        base_model_kwargs = dict(
+            network=network,
+            betas=betas,
+            shape=shape,
+            model_mean_type=model_mean_type,
+            model_var_type=model_var_type,
+            dynamic_threshold=dynamic_threshold,
+            clip_denoised=clip_denoised,
+            rescale_timesteps=rescale_timesteps,
+            use_timesteps=space_timesteps(steps, timestep_respacing),
+            device=device,
+        )
+    else:
+        base_model_kwargs = dict(
+            network=network,
+            shape=shape,
+            sde=sde,
+            device=device,
+            eps=eps,
+        )
+        
+    sampler = get_sampler(name=sampler)
     merged_kwargs = {**base_model_kwargs, **kwargs}
     
     return sampler(**merged_kwargs)
@@ -365,4 +378,123 @@ class DDPM(SpacedDiffusion):
         if t != 0:  # no noise when t == 0
             sample += torch.exp(0.5 * out["log_variance"]) * noise
 
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"]}    
+
+class ScoreBased(ABC):
+    def __init__(
+        self,
+        network,
+        sde,
+        shape,
+        device="cpu",
+        scaler=None,  # sklearn object #TODO: implement for images,
+        eps=1e-3,
+        **kwargs,
+    ):
+        self.network = network
+        self.sde_object = sde
+        self.eps = eps
+        self.device = device
+        self.scaler = scaler
+        self.shape = shape
+        
+        reduce_mean = True
+        self.reduce_op = (
+            torch.mean
+            if reduce_mean
+            else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
+        )
+        self.rsde_object = self.sde_object.reverse(self.network, probability_flow=False)
+        
+        
+    def forward_diffusion(self, x_0, t):
+        noise = torch.randn_like(x_0).to(self.device)
+        mean, std = self.sde_object.marginal_prob(x_0, t)
+        x_t = mean + expand_as(std, noise) * noise
+        return x_t, noise, mean, std
+        
+        
+    def train_loss_fn(self, data, t):
+        """
+        Computes the training loss.
+
+        Args:
+            data (torch.Tensor): The data batch.
+            t (int): integer timestep.
+        Returns:
+            torch.Tensor: The training loss.
+        """
+        timesteps = torch.linspace(self.eps, 1.0, self.sde_object.N, device=self.device)
+        perturbed_x, noise, mean, std = self.forward_diffusion(data, timesteps[t])
+        # vec_t = torch.ones(x_0.shape[0], device=self.device) * t
+        assert (
+            t.shape[0] == data.shape[0]
+        ), "Time steps batch must be the same length as the data batch"
+        vec_t = t
+        score = self.network(perturbed_x, vec_t)
+        noise_pred = score * expand_as(std, noise) * (-1)
+        loss = F.mse_loss(noise_pred, noise)
+        return loss
+    
+    def tweedie_projection(self, x, t):
+        std = self.sde_object.marginal_prob(x, t)[1]
+        t = (t * (self.sde_object.N - 1) / self.sde_object.T).long()
+        return x + expand_as(std, x) ** 2 * self.network(x, t)
+    
+    
+    def predictor_update_fn(self, x, t):
+        """Euler-Maruyama update."""
+        dt = -1.0 / self.rsde_object.N
+        z = torch.randn_like(x)
+        drift, diffusion = self.rsde_object.sde(x, t)
+        x_mean = x + drift * dt
+
+        x = x_mean + diffusion * z * math.sqrt(-dt)
+        return x, x_mean
+    
+    
+    def sample(self, sample_shape, x_start=None, return_list=False):
+        """
+        The function used for sampling from noise.
+        """
+        assert sample_shape[1:] == self.shape, "Sample shape must match the model shape"
+        
+        if x_start is None:
+            x_start = self.sde_object.prior_sampling(sample_shape).to(self.device)
+        
+        self.network.eval()
+        with torch.no_grad():
+            x = x_start
+            timesteps = torch.linspace(
+                self.sde_object.T, self.eps, self.sde_object.N, device=self.device
+            )
+            list_of_samples = []
+            for i in range(self.sde_object.N):
+                # print(f"Solving for timestep {i}")
+                t = timesteps[i]
+                vec_t = torch.ones(sample_shape[0], device=self.device) * t
+                x, x_mean = self.predictor_update_fn(
+                    x,
+                    vec_t,
+                )
+                if return_list:
+                    list_of_samples.append(x_mean.detach().cpu().numpy())
+        if return_list:
+            for i in range(len(list_of_samples)):
+                list_of_samples[i] = self.inverse_scaler(list_of_samples[i])
+            return x_mean, list_of_samples
+        else:
+            return self.inverse_scaler(x_mean)
+                
+    
+    def inverse_scaler(self, x):
+        if self.scaler is not None:
+            if isinstance(self.scaler, StandardScaler):
+                # convert to numpy and detaching from the graph
+                x = x.detach().cpu().numpy()
+                return self.scaler.inverse_transform(x)
+            else:
+                x = x.detach().cpu()
+                return self.scaler.inverse_transform(x)
+        else:
+            return x
