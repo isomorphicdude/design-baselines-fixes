@@ -114,7 +114,6 @@ class SDE(abc.ABC):
                 if not self.rsde_modified:
                     drift, diffusion = sde_fn(x, t)
                     score = score_fn(x, t)
-                    print(score)
                     drift = drift - diffusion**2 * score * (
                         0.5 if self.probability_flow else 1.0
                     )
