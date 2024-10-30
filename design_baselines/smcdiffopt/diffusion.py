@@ -58,6 +58,7 @@ def create_sampler(
     device="cpu",
     sde=None,
     eps=1e-3,
+    saving_dir=None,
     **kwargs,
 ):
     betas = get_named_beta_schedule(noise_schedule, steps)
@@ -85,6 +86,7 @@ def create_sampler(
             sde=sde,
             device=device,
             eps=eps,
+            saving_dir=saving_dir,
         )
         
     sampler = get_sampler(name=sampler)
@@ -485,13 +487,208 @@ class ScoreBased(ABC):
             return x_mean, list_of_samples
         else:
             return self.inverse_scaler(x_mean)
+        
+        
+    def _half_denoising_update(self, x, t, step_size=None):
+        std = self.sde_object.marginal_prob(x, t)[1]
+        if step_size is None:
+            step_size = std**2 / 2
+
+        new_noise = torch.randn_like(x)
+
+        x_tilde = x + expand_as(std, new_noise) * new_noise
+
+        grad_tilde = self.network(x_tilde, torch.round(t * 999))
+        noise_tilde = torch.randn_like(x)
+        x = (
+            x_tilde
+            + step_size * grad_tilde
+            + expand_as(torch.sqrt(2 * step_size - std**2), noise_tilde) * noise_tilde
+        )
+
+        return x, x_tilde
+
+    def half_denoising_sample(
+        self,
+        sample_shape,
+        noise_level=0.4,
+        num_iter=1000,
+        burnin=0,
+        thinning=1,
+        annealing=False,
+        step_size=None,
+        in_notebook=False,
+        final_time=1,
+        inner_iters=100,
+    ):
+        if in_notebook:
+            from tqdm.notebook import tqdm
+        else:
+            from tqdm import tqdm
+        with torch.no_grad():
+            
+            x = self.sde_object.prior_sampling(sample_shape).to(self.device)
+            list_of_samples = torch.zeros((num_iter, *x.shape), device='cpu')
+            if not annealing:
+                for i in tqdm(range(num_iter)):
+                    vec_t = (
+                        torch.ones(sample_shape[0], device=self.device) * noise_level
+                    )
+                                        
+                    x, x_tilde = self._half_denoising_update(
+                        x,
+                        vec_t,
+                        step_size=step_size,
+                    )
+
+                    # x = self.tweedie_projection(x, vec_t)
+                    if i > burnin:
+                        list_of_samples[i, ...] = self.tweedie_projection(x, vec_t).detach().cpu()
+                        # list_of_samples[i, ...] = x.detach().cpu()
+            else:
+                list_of_samples = torch.zeros(
+                    ((final_time-1) * inner_iters + num_iter, *x.shape), device='cpu'
+                )
+                timesteps = torch.linspace(
+                self.sde_object.T, self.eps, self.sde_object.N, device=self.device
+                )
+                for i in tqdm(range(final_time)):
+                    if i < final_time:
+                        t = timesteps[i]
+                        vec_t = torch.ones(sample_shape[0], device=self.device) * t
+                    else:
+                        t = self.sde_object.T * (final_time / self.sde_object.N)
+                        vec_t = torch.ones(sample_shape[0], device=self.device) * t
+                    if i >= final_time-1:
+                        inner_iters = num_iter
+                    for j in range(inner_iters):                        
+                        x, x_tilde = self._half_denoising_update(
+                            x,
+                            vec_t,
+                            step_size=None,
+                        )
+                        # if i * inner_iters + j > burnin and i < final_time-1:
+                            # list_of_samples[i * inner_iters + j, ...] = x
+                        if i >= final_time - 1:
+                            list_of_samples[j, ...] = self.tweedie_projection(x, vec_t).detach().cpu()
+                            
+        return x, list_of_samples[burnin::thinning]
+    
+    def _baoab_corrector_update_fn(self, x, t, prev_noise=None, step_size=None):
+        """
+        Here t determines the noise level.
+        """
+        # includes the case of VE which is 1.0
+        std = self.sde_object.marginal_prob(x, t)[1]
+
+        grad = self.network(x, torch.round(t * 999))
+        new_noise = torch.randn_like(x)
+        if step_size is None:
+            step_size = std**2 * 2
+        x_mean = x + step_size[:, None, None, None] * grad
+        noise = new_noise + prev_noise
+
+        # NOTE: this step is actually wrong
+        # should be std[:, None, None, None] instead
+        # but works surprisingly well
+        # x = x_mean + noise * torch.sqrt(step_size * 2)[:, None, None, None]
+
+        x = x_mean + noise * std[:, None, None, None]
+        return x, x_mean, new_noise
+    
+    
+    def baoab_sample(
+        self,
+        sample_shape,
+        noise_level=0.4,
+        num_iter=1000,
+        burnin=0,
+        thinning=1,       
+        in_notebook=False, 
+    ):
+        if in_notebook:
+            from tqdm.notebook import tqdm
+        else:
+            from tqdm import tqdm
+        with torch.no_grad():
+            x = torch.randn(sample_shape, device=self.device)
+            prev_noise = torch.zeros_like(x)
+            
+            list_of_samples = torch.zeros((num_iter, *x.shape), device='cpu')
+            
+            for i in tqdm(range(num_iter)):
+                vec_t = (
+                    torch.ones(sample_shape[0], device=self.device) * noise_level
+                )
+                
+                x, x_mean, prev_noise = self._baoab_corrector_update_fn(
+                    x,
+                    vec_t,
+                    prev_noise=prev_noise,
+                )
+
+                # NOTE: this is not present in the original paper
+                # but works surprisingly well combined with the wrong update above
+                # x = self.tweedie_projection(x, vec_t)
+
+                if i > burnin:
+                    # list_of_samples[i, ...] = x.detach().cpu()
+                    list_of_samples[i, ...] = self.tweedie_projection(x, vec_t).detach().cpu()
+                    
+        return x_mean, list_of_samples[burnin::thinning]
+    
+    
+    def _corrector_update_fn(self, x, t, step_size=None, n_steps=1):
+        """Updates the state with Langevin dynamics."""
+        target_snr = 0.25
+        timestep = (t * (self.sde_object.N - 1) / self.sde_object.T).long()
+        alpha = self.sde_object.alphas.to(t.device)[timestep]
+        
+        for i in range(n_steps):
+            grad = self.network(x, torch.round(t * 999))
+            noise = torch.randn_like(x)
+            grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
+            noise_norm = torch.norm(noise.reshape(noise.shape[0], -1), dim=-1).mean()
+            if step_size is None:
+                step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
+            x_mean = x + expand_as(step_size, grad) * grad
+            x = x_mean + expand_as(torch.sqrt(step_size * 2), noise) * noise
+        return x, x_mean
+    
+    def corrector_sample(self, 
+                         sample_shape, 
+                         noise_level=0.4, 
+                         num_iter=1000, 
+                         burnin=0, 
+                         thinning=1, 
+                         n_steps=1,
+                         in_notebook=False):
+        if in_notebook:
+            from tqdm.notebook import tqdm
+        else:
+            from tqdm import tqdm
+        with torch.no_grad():
+            x = self.sde_object.prior_sampling(sample_shape).to(self.device)
+            list_of_samples = torch.zeros((num_iter, *x.shape), device='cpu')
+            for i in tqdm(range(num_iter)):
+                vec_t = (
+                    torch.ones(sample_shape[0], device=self.device) * noise_level
+                )
+                x, x_mean = self._corrector_update_fn(
+                    x,
+                    vec_t,
+                    n_steps=n_steps,
+                )
+
+                if i > burnin:
+                    list_of_samples[i, ...] = self.tweedie_projection(x, vec_t).detach().cpu()
+        return x_mean, list_of_samples[burnin::thinning]
                 
     
     def inverse_scaler(self, x):
         if self.scaler is not None:
             if isinstance(self.scaler, StandardScaler):
                 # convert to numpy and detaching from the graph
-                x = x.detach().cpu().numpy()
                 return self.scaler.inverse_transform(x)
             else:
                 x = x.detach().cpu()
