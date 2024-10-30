@@ -20,7 +20,9 @@ from design_baselines.data import StaticGraphTask, build_pipeline
 from design_baselines.logger import Logger
 from design_baselines.utils import spearman
 from design_baselines.smcdiffopt.diffusion import create_sampler
-from design_baselines.smcdiffopt.guided_samplers import SMCDiffOpt
+from design_baselines.smcdiffopt.guided_samplers import SMCDiffOpt, SVDD, NestedSMC
+from design_baselines.smcdiffopt.guided_sgm import LangevinSMCMC
+from design_baselines.smcdiffopt.sde_lib import VPSDE, VESDE
 from design_baselines.smcdiffopt.nets import FullyConnectedWithTime
 from design_baselines.smcdiffopt.trainer import train_model
 
@@ -235,9 +237,6 @@ def smcdiffopt(
     logging.info(f"Dimension is {task.x.shape[1]}")
 
     if task.is_discrete:
-        # raise NotImplementedError(
-        #     "SMC-DIFF-OPT does not support discrete x values for now."
-        # )
         task.map_to_logits()
 
     # instantiate the diffusion model
@@ -283,15 +282,19 @@ def smcdiffopt(
         objective_fn = lambda x: task.predict(scaler.inverse_transform(x.cpu().numpy()))
 
     # initialise the model
-    if method == "smcdiffopt" or method == "nested":
-        sample_shape = (1, np.prod(task.x.shape[1:]))
-    else:
+    #TODO: this is not the best way to initialise the model
+    if method == "svdd":
         sample_shape = (evaluation_samples, np.prod(task.x.shape[1:]))
-        
+    else:
+        sample_shape = (1, np.prod(task.x.shape[1:]))
+    
+    # sde for sgm
+    sde = VPSDE()
+    
     # NOTE: if training from scratch, need to set num_timesteps to 1000
     model_config = {
         "steps": 1000,
-        "shape": sample_shape,
+        "shape": sample_shape, # not used for training
         "noise_schedule": "linear",
         "model_mean_type": "epsilon",
         "model_var_type": "fixed_large",
@@ -306,6 +309,8 @@ def smcdiffopt(
         "noise_sample_size": noise_sample_size,
         "anneal": anneal,
         "use_x0": use_x0,
+        "sde": sde,
+        "saving_dir": logging_dir,
     }
 
     dim_x = np.prod(task.x.shape[1:])
@@ -343,9 +348,9 @@ def smcdiffopt(
         return losses
     if not retrain_model:
         try:
-            logging.info("Loading pre-trained weights.")
+            logging.info("Loading pre-trained weights from HuggingFace...")
             repo_id = "isomorphicdude/SMCDiffOpt"
-            file_name = f"{task_name}.pt"
+            file_name = f"{task_name}.pt" if "sgm" not in method else f"{task_name}_sgm.pt"
             download_path = hf_hub_download(repo_id, file_name)
             diffusion_model.network.load_state_dict(torch.load(download_path, map_location="cpu")['model_state_dict'])
         except:
@@ -367,30 +372,29 @@ def smcdiffopt(
             
     # perform model-based optimization
     logging.info("Performing model-based optimization...")
-    # x_start = torch.randn(evaluation_samples, task.x.shape[1]).to(
-    #     model_config["device"]
-    # )
     diffusion_model.network.to(model_config["device"])
     diffusion_model.network.eval()
-    if method == "smcdiffopt" or method == "nested":
-        num_particles = evaluation_samples
-    else:
+    if method == "svdd":
         num_particles = noise_sample_size
+    else:
+        num_particles = evaluation_samples
         
     # first few val samples
     test_val_samples = val_data[:evaluation_samples]    
     
     x = diffusion_model.sample(
-        x_start=None,
+        x_start=None, # algorithm initialisation, different for VE and VP
         y_obs=None,
-        num_particles=num_particles,
+        num_particles=num_particles, # for both SMC and SVDD
         sampling_method="default",
         resampling_method="systematic",
         beta_scaling=beta_scaling,
         writer=writer,
         seed=seed,
         val_samples=test_val_samples,
-        noise_sample_size=noise_sample_size,
+        noise_sample_size=noise_sample_size, # only used by nested SMC
+        sample_shape=sample_shape,
+        evaluation_samples=evaluation_samples, # for SGM
     )
     torch.cuda.empty_cache()
     del nn_model

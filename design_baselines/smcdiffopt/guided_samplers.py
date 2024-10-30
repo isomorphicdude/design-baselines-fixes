@@ -166,18 +166,19 @@ class SMCDiffOpt(SpacedDiffusion):
         beta_scaling = kwargs.get("beta_scaling", 200.0)
         writer = kwargs.get("writer", None)
         seed = kwargs.get("seed", None)
+        sample_shape = kwargs.get("sample_shape", None)
         assert seed is not None, "Seed must be provided."
 
         # flattened initial x, shape (batch * num_particles, dim_x)
         # where for images dim = 3*256*256
-        model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
+        model_input_shape = (sample_shape[0] * num_particles, *sample_shape[1:])
         x_t = torch.randn(
-            (self.shape[0] * num_particles, np.prod(self.shape[1:])), device=self.device
+            (sample_shape[0] * num_particles, np.prod(sample_shape[1:])), device=self.device
         )
         
         # initial sampling step P(x_T)exp(beta * f(x_T))
         x_t = self._initialize(
-            x_t, num_particles, beta_scaling, model_input_shape, resampling_method
+            x_t, num_particles, beta_scaling, model_input_shape, resampling_method, sample_shape=sample_shape
         )
         
         with torch.no_grad():
@@ -189,13 +190,13 @@ class SMCDiffOpt(SpacedDiffusion):
                     y_new = None
                     y_old = None
 
-                vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t])).to(x_t.device)
+                vec_t = (torch.ones(sample_shape[0]) * (self.ts[num_t])).to(x_t.device)
 
                 # noise predicting model
                 eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_t)
-                if eps_pred.shape[1] == 2 * self.shape[1]:
+                if eps_pred.shape[1] == 2 * sample_shape[1]:
                     eps_pred, model_var_values = torch.split(
-                        eps_pred, self.shape[1], dim=1
+                        eps_pred, sample_shape[1], dim=1
                     )
 
                 x_new, x_mean_new, std_new, x_0_old = self._proposal_X_t(
@@ -205,13 +206,13 @@ class SMCDiffOpt(SpacedDiffusion):
                     return_std=True
                 )  # (batch * num_particles, 3, 256, 256)
 
-                new_vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
+                new_vec_t = (torch.ones(sample_shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
                 eps_pred_new = self.model_fn(x_new.view(*model_input_shape), new_vec_t)
                 
                 x_0_new = self.get_tweedie_est(num_t-1, x_new, eps_pred_new)
                 
                 
-                x_input_shape = (self.shape[0] * num_particles, -1)
+                x_input_shape = (sample_shape[0] * num_particles, -1)
                 
                 log_weights, xt_mean, xt_max, x0_mean, x0_max = self.get_log_potential(
                     x_0_new.view(*x_input_shape),
@@ -223,7 +224,7 @@ class SMCDiffOpt(SpacedDiffusion):
                     num_t,
                     beta_scaling=beta_scaling,
                 )
-                log_weights = log_weights.view(self.shape[0], num_particles)
+                log_weights = log_weights.view(sample_shape[0], num_particles)
 
                 # normalise weights
                 log_weights = log_weights - torch.logsumexp(
@@ -243,15 +244,15 @@ class SMCDiffOpt(SpacedDiffusion):
                     resample_idx = self.resample(
                         torch.exp(log_weights).view(-1), method=resampling_method
                     )
-                    x_new = (x_new.view(self.shape[0], num_particles, -1))[
-                        torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+                    x_new = (x_new.view(sample_shape[0], num_particles, -1))[
+                        torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
                     ]
 
                 x_t = x_new
 
                 if return_list:
                     samples.append(
-                        x_t.reshape(self.shape[0] * num_particles, *self.shape[1:])
+                        x_t.reshape(sample_shape[0] * num_particles, *sample_shape[1:])
                     )
 
         # apply inverse scaler
@@ -261,7 +262,7 @@ class SMCDiffOpt(SpacedDiffusion):
             return samples, torch.exp(log_weights)
         else:
             return self.inverse_scaler(
-                x_t.view(num_particles, self.shape[0], *self.shape[1:]).squeeze()
+                x_t.view(num_particles, sample_shape[0], *sample_shape[1:]).squeeze()
             )
 
     def get_tweedie_est(self, timestep, x_t, eps_pred):
@@ -447,10 +448,10 @@ class SMCDiffOpt(SpacedDiffusion):
         # if method == "default":
         return obs * self.sqrt_alphas_cumprod[-(t + 1)]
     
-    def _initialize(self, x_t, num_particles, beta_scaling, model_input_shape, resampling_method):
+    def _initialize(self, x_t, num_particles, beta_scaling, model_input_shape, resampling_method, sample_shape):
         with torch.no_grad():
             if self.use_x0:
-                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
+                vec_0 = torch.ones(sample_shape[0] * num_particles).to(x_t.device) * self.ts[-1]
                 eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
                 # get x_0
                 x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
@@ -464,7 +465,7 @@ class SMCDiffOpt(SpacedDiffusion):
                 log_weights = log_weights * self.anneal_schedule(self.num_timesteps - 1)
                 
             log_weights = torch.tensor(log_weights, device=x_t.device).view(
-                self.shape[0], num_particles
+                sample_shape[0], num_particles
             )
             log_weights = log_weights - torch.logsumexp(
                     log_weights, dim=1, keepdim=True
@@ -474,8 +475,8 @@ class SMCDiffOpt(SpacedDiffusion):
             resample_idx = self.resample(
                             torch.exp(log_weights).view(-1), method=resampling_method
             )
-            x_t = (x_t.view(self.shape[0], num_particles, -1))[
-                torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+            x_t = (x_t.view(sample_shape[0], num_particles, -1))[
+                torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
             ]
         return x_t
 
@@ -508,16 +509,19 @@ class SVDD(SMCDiffOpt):
         beta_scaling = kwargs.get("beta_scaling", 200.0)
         writer = kwargs.get("writer", None)
         seed = kwargs.get("seed", None)
+        sample_shape = kwargs.get("sample_shape", None)
+        
         assert seed is not None, "Seed must be provided."
-
+        assert sample_shape is not None, "Sample shape must be provided."
+        
         ts = [i for i in range(1000) if i in self.use_timesteps]
 
         # initial x
-        x_t = torch.randn((self.shape[0], 1, np.prod(self.shape[1:])), device=self.device)
+        x_t = torch.randn((sample_shape[0], 1, np.prod(sample_shape[1:])), device=self.device)
         # initial sampling step P(x_T)exp(beta * f(x_T))
         
-        model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
-        split_input_shape = (self.shape[0], num_particles, *self.shape[1:])
+        model_input_shape = (sample_shape[0] * num_particles, *sample_shape[1:])
+        split_input_shape = (sample_shape[0], num_particles, *sample_shape[1:])
         with torch.no_grad():
             x_t = (
                     x_t
@@ -525,7 +529,7 @@ class SVDD(SMCDiffOpt):
                     .reshape(*model_input_shape)
             )
             if self.use_x0:
-                vec_0 = torch.ones(self.shape[0] * num_particles).to(x_t.device) * self.ts[-1]
+                vec_0 = torch.ones(sample_shape[0] * num_particles).to(x_t.device) * self.ts[-1]
                 eps_pred = self.model_fn(x_t.view(*model_input_shape), vec_0)
                 # get x_0
                 x_0 = self.get_tweedie_est(self.num_timesteps-1, x_t, eps_pred)
@@ -539,7 +543,7 @@ class SVDD(SMCDiffOpt):
                 log_weights = log_weights * self.anneal_schedule(self.num_timesteps - 1)
                 
             log_weights = torch.tensor(log_weights, device=x_t.device).view(
-                self.shape[0], num_particles
+                sample_shape[0], num_particles
             )
             
             # resample the initial particles
@@ -550,7 +554,7 @@ class SVDD(SMCDiffOpt):
                     torch.exp(log_weights), 1, replacement=True
                 )
             x_t = (x_t.view(*split_input_shape))[
-                    torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+                    torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
             ]
             
             x_t = x_t.squeeze(0)
@@ -608,7 +612,7 @@ class SVDD(SMCDiffOpt):
                 log_weights = beta_scaling * objective_val
                 
                 log_weights = torch.tensor(log_weights.numpy(), device=x_t.device).view(
-                    self.shape[0], num_particles
+                    sample_shape[0], num_particles
                 )
 
                 # normalise weights
@@ -629,14 +633,14 @@ class SVDD(SMCDiffOpt):
 
                 # only sample the first particle
                 x_new = (x_new.view(*split_input_shape))[
-                    torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+                    torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
                 ] # somehow this is (1, batch, 1, dim_x)
                 
                 x_t = x_new.squeeze(0)
 
                 if return_list:
                     samples.append(
-                        x_t.reshape(self.shape[0], *self.shape[1:])
+                        x_t.reshape(sample_shape[0], *sample_shape[1:])
                     )
                 
 
@@ -647,7 +651,7 @@ class SVDD(SMCDiffOpt):
             return samples, torch.exp(log_weights)
         else:
             return self.inverse_scaler(
-                x_t.view(self.shape[0], *self.shape[1:]).squeeze()
+                x_t.view(sample_shape[0], *sample_shape[1:]).squeeze()
             )
 
 @register_sampler("unconditional")
@@ -668,6 +672,8 @@ class Unconditional(SMCDiffOpt):
         x0_samples = []
         xt_samples = []
         val_samples = kwargs.get("val_samples", None)
+        sample_shape = kwargs.get("sample_shape", None)
+        assert sample_shape is not None, "Sample shape must be provided."
 
         ts = [i for i in range(1000) if i in self.use_timesteps]
 
@@ -678,14 +684,14 @@ class Unconditional(SMCDiffOpt):
             x_t = x_start
         else:
             x_t = torch.randn(
-                (self.shape[0], np.prod(self.shape[1:])), device=self.device
+                (sample_shape[0], np.prod(sample_shape[1:])), device=self.device
             )
 
         with torch.no_grad():
             for i, num_t in enumerate(list(range(self.num_timesteps))[::-1]):
                 vec_t = (torch.ones(x_t.shape[0]) * (self.ts[num_t])).to(x_t.device)
         
-                model_input_shape = (self.shape[0], *self.shape[1:])
+                model_input_shape = (sample_shape[0], *sample_shape[1:])
 
                 # noise predicting model
                 eps_pred = self.model_fn(x_t, vec_t)
@@ -731,16 +737,17 @@ class NestedSMC(SMCDiffOpt):
         writer = kwargs.get("writer", None)
         seed = kwargs.get("seed", None)
         noise_sample_size = kwargs.get("noise_sample_size", 10)
+        sample_shape = kwargs.get("sample_shape", None)
         assert seed is not None, "Seed must be provided."        
 
         # flattened initial x, shape (batch * num_particles, dim_x)
         # where for images dim = 3*256*256
-        model_input_shape = (self.shape[0] * num_particles, *self.shape[1:])
+        model_input_shape = (sample_shape[0] * num_particles, *sample_shape[1:])
         
         # initial sampling step P(x_T)exp(beta * f(x_T))
         # the same initialisation, without nested IS
         x_t = torch.randn(
-            (self.shape[0] * num_particles, np.prod(self.shape[1:])), device=self.device
+            (sample_shape[0] * num_particles, np.prod(sample_shape[1:])), device=self.device
         )
         x_t = self._initialize(
             x_t, num_particles, beta_scaling, model_input_shape, resampling_method
@@ -750,8 +757,8 @@ class NestedSMC(SMCDiffOpt):
         x_t = x_t.permute(1, 0, 2) # (num_particles, 1, dim_x)
         
         # nested IS begins here
-        expanded_shape = (num_particles, noise_sample_size, *self.shape[1:])
-        collapsed_shape = (num_particles * noise_sample_size, *self.shape[1:])
+        expanded_shape = (num_particles, noise_sample_size, *sample_shape[1:])
+        collapsed_shape = (num_particles * noise_sample_size, *sample_shape[1:])
         
         with torch.no_grad():
             for i, num_t in enumerate(list(range(self.num_timesteps))[::-1]):
@@ -776,7 +783,8 @@ class NestedSMC(SMCDiffOpt):
                      eps_pred,
                      beta_scaling,
                      noise_sample_size,
-                     num_particles
+                     num_particles,
+                     sample_shape=sample_shape
                 )
                 
                 # normalise weights
@@ -800,14 +808,14 @@ class NestedSMC(SMCDiffOpt):
                     resample_idx = self.resample(
                         torch.exp(log_weights).view(-1), method=resampling_method
                     )
-                    x_new = (x_new.view(self.shape[0], num_particles, -1))[
-                        torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+                    x_new = (x_new.view(sample_shape[0], num_particles, -1))[
+                        torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
                     ]
 
                 x_t = x_new
                 if return_list:
                     samples.append(
-                        x_t.reshape(self.shape[0] * num_particles, *self.shape[1:])
+                        x_t.reshape(sample_shape[0] * num_particles, *sample_shape[1:])
                     )
                 
 
@@ -819,7 +827,7 @@ class NestedSMC(SMCDiffOpt):
             return samples, torch.exp(log_weights)
         else:
             return self.inverse_scaler(
-                x_t.view(num_particles, *self.shape[1:])
+                x_t.view(num_particles, *sample_shape[1:])
             )
      
     def _nested_sample(self,
@@ -831,13 +839,14 @@ class NestedSMC(SMCDiffOpt):
                      beta_scaling: float = 200.0,
                      noise_sample_size: int = 10,
                      num_particles: int = 10,
+                     sample_shape = None
                      ):
         x_new, x_mean_new, std_new, x_0_old = self._proposal_X_t(
                                                                 num_t,
                                                                 x_t.view(*collapsed_shape),
                                                                 eps_pred,
                                                                 return_std=True)                                                                 
-        new_vec_t = (torch.ones(self.shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
+        new_vec_t = (torch.ones(sample_shape[0]) * (self.ts[num_t - 1])).to(x_t.device)
         eps_pred_new = self.model_fn(x_new.view(*collapsed_shape), new_vec_t)
         
         
@@ -882,14 +891,14 @@ class NestedSMC(SMCDiffOpt):
             mean_log_weights = torch.zeros((num_particles, 1), device=x_t.device)
             
         x_new = (x_new.view(*expanded_shape))[
-            torch.arange(self.shape[0])[:, None], resample_idx.unsqueeze(0)
+            torch.arange(sample_shape[0])[:, None], resample_idx.unsqueeze(0)
         ]
         x_new = x_new.squeeze(0)
     
         # take mean over dim=1
         # else:
             # mean_log_weights = torch.zeros((num_particles, 1), device=x_t.device)
-            # x_new = x_new.reshape(num_particles, *self.shape[1:])
+            # x_new = x_new.reshape(num_particles, *sample_shape[1:])
             
         val_dict = {
             "xt_mean": xt_mean.item(),
