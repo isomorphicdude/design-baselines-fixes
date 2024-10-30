@@ -38,6 +38,8 @@ def train_model(
 ):
     if in_notebook:
         from tqdm.notebook import tqdm
+    else:
+        from tqdm import tqdm
     # load latest checkpoint
     try:
         if os.path.exists(ckpt_dir) and os.listdir(ckpt_dir):
