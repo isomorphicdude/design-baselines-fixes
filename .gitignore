@@ -180,5 +180,5 @@ outputs/
 design_baselines/sde_models
 
 
-smcdiffopt/
-svdd/
+# smcdiffopt/
+# svdd/

@@ -300,7 +300,7 @@ def smcdiffopt(
         "model_var_type": "fixed_large",
         "dynamic_threshold": False,
         "clip_denoised": False,
-        "rescale_timesteps": False,
+        "rescale_timesteps": True,
         "timestep_respacing": f"ddim{num_timesteps}",
         "device": "cuda",
         "scaler": scaler,
