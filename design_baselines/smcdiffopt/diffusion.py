@@ -313,6 +313,11 @@ class GaussianDiffusion(ABC):
             if isinstance(self.scaler, StandardScaler):
                 # convert to numpy and detaching from the graph
                 x = x.detach().cpu().numpy()
+                
+                if len(x.shape) == 1:
+                    # single sample
+                    x = x.reshape(1, -1)
+                    
                 return self.scaler.inverse_transform(x)
             else:
                 x = x.detach().cpu()
@@ -689,6 +694,12 @@ class ScoreBased(ABC):
         if self.scaler is not None:
             if isinstance(self.scaler, StandardScaler):
                 # convert to numpy and detaching from the graph
+                x = x.detach().cpu().numpy()
+                
+                if len(x.shape) == 1:
+                    # single sample
+                    x = x.reshape(1, -1)
+                    
                 return self.scaler.inverse_transform(x)
             else:
                 x = x.detach().cpu()
